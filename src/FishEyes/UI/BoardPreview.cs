@@ -51,8 +51,14 @@ public sealed class BoardPreview : Control
 {
     private BoardFrame? frame;
     private bool running;
+    private Analysis? whiteMove, blackMove;
+    private Bitmap? renderedBoard;
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public int RenderCount { get; private set; }
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public BoardFrame? Frame => frame;
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public int ArrowCount => (whiteMove?.Move is null ? 0 : 1) + (blackMove?.Move is null ? 0 : 1);
     public BoardPreview()
     {
         DoubleBuffered = true; TabStop = false;
@@ -62,10 +68,50 @@ public sealed class BoardPreview : Control
     }
     public void UpdateBoard(BoardFrame? value, bool isRunning)
     {
+        bool changed = running != isRunning || frame?.Recognition.Position.Placement != value?.Recognition.Position.Placement
+            || frame?.Recognition.WhiteBottom != value?.Recognition.WhiteBottom || frame?.IsReliable != value?.IsReliable;
+        if (!isRunning || value is null || !value.IsReliable || frame?.Recognition.Position.Placement != value.Recognition.Position.Placement)
+        { changed |= ArrowCount != 0; whiteMove = blackMove = null; }
         frame = value; running = isRunning;
         AccessibleDescription = value is null ? (running ? "No board detected" : "Analysis paused")
             : $"{(value.IsReliable ? "Detected" : "Uncertain")} position: {value.Recognition.Position.Placement}. {(value.Recognition.WhiteBottom ? "White" : "Black")} at bottom.";
-        Invalidate();
+        if (changed) InvalidateBoard();
+    }
+    public void ClearMoves()
+    {
+        if (whiteMove is null && blackMove is null) return;
+        whiteMove = blackMove = null; InvalidateBoard();
+    }
+    public void SetMoves(BoardFrame forBoard, Analysis? white, Analysis? black)
+    {
+        if (!running || frame is not { IsReliable: true }
+            || frame.Recognition.Position.Placement != forBoard.Recognition.Position.Placement) return;
+        var nextWhite = white?.Move is { } wm && frame.Recognition.Position.IsLegal(wm, true) ? white : null;
+        var nextBlack = black?.Move is { } bm && frame.Recognition.Position.IsLegal(bm, false) ? black : null;
+        if (whiteMove?.Move == nextWhite?.Move && blackMove?.Move == nextBlack?.Move) return;
+        whiteMove = nextWhite; blackMove = nextBlack;
+        InvalidateBoard();
+    }
+    private void InvalidateBoard()
+    {
+        renderedBoard?.Dispose(); renderedBoard = null; Invalidate();
+    }
+    internal void PrepareForAnimation()
+    {
+        if (renderedBoard is not null || Width <= 0 || Height <= 0) return;
+        var bitmap = new Bitmap(Width, Height);
+        bitmap.SetResolution(DeviceDpi, DeviceDpi);
+        try { using var graphics = Graphics.FromImage(bitmap); RenderBoard(graphics); }
+        catch { bitmap.Dispose(); throw; }
+        renderedBoard = bitmap; RenderCount++;
+    }
+    protected override void OnSizeChanged(EventArgs e) { base.OnSizeChanged(e); InvalidateBoard(); }
+    protected override void OnDpiChangedAfterParent(EventArgs e) { base.OnDpiChangedAfterParent(e); InvalidateBoard(); }
+    protected override void OnBackColorChanged(EventArgs e) { base.OnBackColorChanged(e); InvalidateBoard(); }
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) { renderedBoard?.Dispose(); renderedBoard = null; }
+        base.Dispose(disposing);
     }
     public char PieceAtDisplaySquare(int row, int column)
     {
@@ -77,14 +123,20 @@ public sealed class BoardPreview : Control
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
-        var g = e.Graphics; float s = DeviceDpi / 96f;
+        PrepareForAnimation();
+        if (renderedBoard is not null) e.Graphics.DrawImageUnscaled(renderedBoard, 0, 0);
+    }
+    private void RenderBoard(Graphics g)
+    {
+        float s = DeviceDpi / 96f;
         g.Clear(BackColor); g.SmoothingMode = SmoothingMode.AntiAlias;
         float size = Math.Min(Width - 16 * s, Height - 40 * s);
         if (size <= 0) return;
         float left = (Width - size + 12 * s) / 2, cell = size / 8;
         using var light = new SolidBrush(Color.FromArgb(163, 181, 181));
         using var dark = new SolidBrush(Color.FromArgb(67, 87, 99));
-        using var symbolFont = new FontFamily("Segoe UI Symbol");
+        g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+        g.PixelOffsetMode = PixelOffsetMode.HighQuality;
         using var coordinates = new Font("Segoe UI", 7.5f);
         bool whiteBottom = frame?.Recognition.WhiteBottom ?? true;
         for (int row = 0; row < 8; row++) for (int col = 0; col < 8; col++)
@@ -92,20 +144,16 @@ public sealed class BoardPreview : Control
             var square = new RectangleF(left + col * cell, row * cell, cell, cell);
             g.FillRectangle((row + col) % 2 == 0 ? light : dark, square);
             char piece = PieceAtDisplaySquare(row, col);
-            int type = "KQRBNP".IndexOf(char.ToUpperInvariant(piece));
-            if (type < 0) continue;
-            // Use one consistent, legible set regardless of the detected skin.
-            string glyph = char.ConvertFromUtf32(0x265A + type);
-            using var path = new GraphicsPath();
-            path.AddString(glyph, symbolFont, (int)FontStyle.Regular, cell * .90f, PointF.Empty, StringFormat.GenericTypographic);
-            var bounds = path.GetBounds();
-            using var transform = new Matrix();
-            transform.Translate(square.X + (cell - bounds.Width) / 2 - bounds.X, square.Y + (cell - bounds.Height) / 2 - bounds.Y);
-            path.Transform(transform);
-            bool white = char.IsUpper(piece);
-            using var outline = new Pen(white ? Color.FromArgb(31, 40, 47) : Color.FromArgb(190, 201, 204), .7f * s) { LineJoin = LineJoin.Round };
-            using var fill = new SolidBrush(white ? Color.FromArgb(250, 248, 231) : Color.FromArgb(23, 30, 39));
-            g.DrawPath(outline, path); g.FillPath(fill, path);
+            if (piece != '.' && PreviewPieces.For(piece) is { } sprite) g.DrawImage(sprite, square);
+        }
+        if (frame is { IsReliable: true })
+        {
+            // Reuse the screen-overlay renderer so colors, orientation and
+            // promotion labels always describe the same engine results.
+            var state = g.Save();
+            g.SetClip(new RectangleF(left, 0, size, size));
+            ArrowOverlay.DrawMoves(g, Rectangle.Round(new RectangleF(left, 0, size, size)), whiteBottom, whiteMove, blackMove);
+            g.Restore(state);
         }
         for (int i = 0; i < 8; i++)
         {

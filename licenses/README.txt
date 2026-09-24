@@ -1,7 +1,7 @@
 FishEyes C# dependency notices
 
 Chess.com piece artwork:
-  Recognition templates are derived from public Chess.com theme sprites.
+  Recognition templates and Neo preview pieces use public Chess.com sprites.
   Artwork belongs to Chess.com and its respective creators, and is not
   covered by the MIT/Apache notices below. Source URLs and image hashes:
   assets/themes/manifest.json in the source repository.

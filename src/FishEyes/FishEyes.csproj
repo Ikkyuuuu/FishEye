@@ -19,6 +19,7 @@
     <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.13.0.20260627" />
     <EmbeddedResource Include="../../assets/models/chess_piece_classifier.onnx" LogicalName="FishEyes.Model.onnx" />
     <EmbeddedResource Include="../../assets/themes/chesscom-templates.br" LogicalName="FishEyes.Themes.br" Condition="Exists('../../assets/themes/chesscom-templates.br')" />
+    <EmbeddedResource Include="../../assets/pieces/neo/*.png" LogicalName="FishEyes.Pieces.%(Filename)%(Extension)" />
     <EmbeddedResource Include="../../assets/branding/logo.png" LogicalName="FishEyes.Logo.png" />
     <EmbeddedResource Include="../../assets/branding/FishEyes.ico" LogicalName="FishEyes.App.ico" />
     <Content Include="../../licenses/**/*" Link="licenses/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />

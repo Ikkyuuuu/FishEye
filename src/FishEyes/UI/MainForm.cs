@@ -18,14 +18,18 @@ public sealed class MainForm : Form
     private readonly BoardDisclosure disclosure = new() { TabIndex = 3 };
     private readonly BoardPreview boardPreview = new();
     private readonly Panel previewClip = new() { TabStop = false };
-    private readonly System.Windows.Forms.Timer previewAnimation = new() { Interval = 16 };
+    private readonly System.Windows.Forms.Timer previewAnimation = new() { Interval = 10 };
     private readonly Stopwatch previewClock = new();
     private float previewProgress, previewStart;
+    private double previewDuration = 150;
+    private int previewBaseHeight, previewExtraHeight, previewPanelWidth;
+    private Rectangle previewWorkingArea;
     private bool previewExpanded;
     private readonly System.Windows.Forms.Timer timer = new() { Interval = 1000 };
     private readonly ScreenScanner scanner = new();
     private readonly EngineService engine;
     private readonly ArrowOverlay arrows = new();
+    private readonly AlwaysOnTop alwaysOnTop;
     private Task<BoardFrame?>? captureTask;
     private bool captureBusy, closing, captureExcluded;
     private int generation, stableFrames;
@@ -41,6 +45,7 @@ public sealed class MainForm : Form
 
     public MainForm(EngineService? service = null)
     {
+        alwaysOnTop = new AlwaysOnTop(this, arrows);
         engine = service ?? new EngineService(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "FishEyes", "analysis-cache-v1.json"));
         Text = "FishEyes · live chess";
         Icon = Branding.AppIcon;
@@ -93,15 +98,18 @@ public sealed class MainForm : Form
         Place(blackLabel, 156, 156, 124, 62);
         Place(detail, 20, 230, 260, 18);
         Place(disclosure, 20, 260, 260, 28);
-        ApplyPreviewLayout();
+        ApplyPreviewLayout(refreshGeometry: true);
         ResumeLayout();
     }
     private void TogglePreview()
     {
         AdvancePreview();
+        ApplyPreviewLayout(refreshGeometry: true);
+        boardPreview.PrepareForAnimation();
         previewExpanded = !previewExpanded;
         disclosure.AccessibleName = previewExpanded ? "Hide detected board" : "Show detected board";
         previewStart = previewProgress;
+        previewDuration = Math.Max(60, 150 * Math.Abs((previewExpanded ? 1 : 0) - previewStart));
         if (Visible && OverlayTheme.AnimationsEnabled)
         { previewClock.Restart(); previewAnimation.Start(); }
         else
@@ -110,29 +118,40 @@ public sealed class MainForm : Form
     private void AdvancePreview()
     {
         if (!previewClock.IsRunning) return;
-        float t = (float)Math.Clamp(previewClock.Elapsed.TotalMilliseconds / 240, 0, 1);
+        float t = (float)Math.Clamp(previewClock.Elapsed.TotalMilliseconds / previewDuration, 0, 1);
+        // Respond immediately to the click, then settle gently at the endpoint.
         float eased = 1 - MathF.Pow(1 - t, 3);
         previewProgress = previewStart + ((previewExpanded ? 1 : 0) - previewStart) * eased;
         if (t >= 1) { previewAnimation.Stop(); previewClock.Reset(); }
         ApplyPreviewLayout();
     }
-    private void ApplyPreviewLayout()
+    private void ApplyPreviewLayout(bool refreshGeometry = false)
     {
-        float s = DeviceDpi / 96f;
-        int Px(int value) => (int)Math.Round(value * s);
-        var area = Screen.FromControl(this).WorkingArea;
-        int extra = Math.Min(Px(296), Math.Max(Px(80), area.Height - Px(316)));
-        int revealed = (int)Math.Round(extra * previewProgress);
-        previewClip.SetBounds(Px(20), Px(300), Px(260), revealed);
-        boardPreview.SetBounds(0, 0, Px(260), extra - Px(12));
+        SuspendLayout(); previewClip.SuspendLayout();
+        if (refreshGeometry)
+        {
+            float s = DeviceDpi / 96f;
+            int Px(int value) => (int)Math.Round(value * s);
+            previewWorkingArea = Screen.FromControl(this).WorkingArea;
+            previewBaseHeight = Px(300); previewPanelWidth = Px(300);
+            previewExtraHeight = Math.Min(Px(296), Math.Max(Px(80), previewWorkingArea.Height - Px(316)));
+            previewClip.SetBounds(Px(20), previewBaseHeight, Px(260), previewClip.Height);
+            boardPreview.SetBounds(0, 0, Px(260), previewExtraHeight - Px(12));
+        }
+        int revealed = (int)Math.Round(previewExtraHeight * previewProgress);
+        previewClip.Height = revealed;
         previewClip.Visible = revealed > 0;
         disclosure.Progress = previewProgress;
-        ClientSize = new Size(Px(300), Px(300) + revealed);
-        if (Visible && Bottom > area.Bottom) Top = Math.Max(area.Top, area.Bottom - Height);
+        int height = previewBaseHeight + revealed;
+        int top = Visible ? Math.Max(previewWorkingArea.Top, Math.Min(Top, previewWorkingArea.Bottom - height)) : Top;
+        // One native bounds update per frame instead of resize followed by move.
+        SetBounds(Left, top, previewPanelWidth, height);
+        previewClip.ResumeLayout(false); ResumeLayout(false);
     }
     protected override void OnShown(EventArgs e)
     {
         LayoutPanel();
+        alwaysOnTop.Start();
         base.OnShown(e);
         var area = Screen.FromControl(this).WorkingArea;
         Location = new Point(Math.Clamp(Left, area.Left, Math.Max(area.Left, area.Right - Width)),
@@ -204,6 +223,7 @@ public sealed class MainForm : Form
         lastPosition = currentKey = analyzingKey = null;
         currentFrame = null; whiteResult = blackResult = null;
         arrows.Clear();
+        boardPreview.ClearMoves();
         whiteLabel.Text = "—"; blackLabel.Text = "—";
         if (clearPreview) boardPreview.UpdateBoard(null, IsRunning);
     }
@@ -242,6 +262,7 @@ public sealed class MainForm : Form
                 currentKey = key; generation++;
                 analyzingKey = null; whiteResult = blackResult = null;
                 arrows.Clear();
+                boardPreview.ClearMoves();
                 whiteLabel.Text = "Waiting…"; blackLabel.Text = "Waiting…";
             }
             if (stableFrames < 2)
@@ -304,12 +325,15 @@ public sealed class MainForm : Form
     }
     private void ShowCurrentArrows()
     {
+        if (currentFrame is not null) boardPreview.SetMoves(currentFrame, whiteResult, blackResult);
         if (currentFrame is not null && (whiteResult?.Move is not null || blackResult?.Move is not null))
             arrows.SetMoves(currentFrame, whiteResult, blackResult);
+        alwaysOnTop.Raise();
     }
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
         closing = true; IsRunning = false; generation++;
+        alwaysOnTop.Dispose();
         timer.Stop(); timer.Dispose(); previewAnimation.Stop(); previewAnimation.Dispose(); tips.Dispose(); arrows.Dispose(); engine.Dispose();
         if (captureTask is { IsCompleted: false } task) _ = task.ContinueWith(_ => scanner.Dispose());
         else scanner.Dispose();

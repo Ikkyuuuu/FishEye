@@ -16,6 +16,7 @@ FishEye watches your screen, detects the pieces, and asks Stockfish to figure it
 - Blue arrow for White, orange arrow for Black.
 - Adjustable search depth from 1 to 15.
 - Animated **Detected board** dropdown to check the pieces FishEye sees.
+- Always-on-top overlay that stays visible when you switch apps.
 - Remembers analyzed positions, so it doesn't keep asking the API the same thing at the same depth.
 
 Both arrows use the current board, each assuming that side is to move.<br><br>
@@ -50,6 +51,8 @@ Here's Band Class. At depth 12, White gets **c3 → d5** and Black gets **c7 →
 Switch **Off** to pause, drag the FishEye header to move it, or press **×** to close.<br><br>
 
 Wanna check if the pieces were read correctly? Click **Detected board** at the bottom. The preview slides open, updates as you play, and follows the board's orientation. Click again to tuck it away.
+
+The preview uses Chess.com's Neo pieces and shows the same blue and orange move arrows as the screen overlay.
 
 Uncertain detections are labeled in the preview and aren't sent for analysis. Switching **Off** clears the preview too.
 

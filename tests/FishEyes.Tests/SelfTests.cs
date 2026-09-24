@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using System.Runtime.InteropServices;
 using OpenCvSharp;
 using Rect = OpenCvSharp.Rect;
 
@@ -10,6 +11,17 @@ namespace FishEyes;
 
 internal static class SelfTests
 {
+    [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr window, uint command);
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
+    private static bool IsAbove(IntPtr first, IntPtr second)
+    {
+        for (IntPtr next = GetWindow(second, 3); next != IntPtr.Zero; next = GetWindow(next, 3))
+            if (next == first) return true;
+        return false;
+    }
     private const string Start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
     private static void Check(bool condition, string description)
     { if (!condition) throw new InvalidOperationException("Test failed: " + description); }
@@ -206,6 +218,8 @@ internal static class SelfTests
         int capturesAtPause = 0;
         double pausedAt = 0;
         int exit = 1;
+        int previewFrames = 0;
+        double previewLastFrameMs = 0, previewLargestFrameGapMs = 0;
         static IEnumerable<Control> Descendants(Control parent) => parent.Controls.Cast<Control>()
             .SelectMany(child => new[] { child }.Concat(Descendants(child)));
         var controls = Descendants(panel).ToArray();
@@ -216,22 +230,53 @@ internal static class SelfTests
         var disclosure = controls.OfType<Button>().Single(button => button.AccessibleName == "Show detected board");
         var detectedBoard = controls.OfType<BoardPreview>().Single();
         var depthInput = controls.OfType<TextBox>().Single();
+        async Task VerifyTopmost(bool demote)
+        {
+            using var other = new Form { Text = "FishEyes stacking test", FormBorderStyle = FormBorderStyle.None,
+                StartPosition = FormStartPosition.Manual, Bounds = panel.Bounds, TopMost = true, ShowInTaskbar = false };
+            other.Show(); other.Activate();
+            if (demote) SetWindowPos(panel.Handle, new IntPtr(-2), 0, 0, 0, 0, 0x13);
+            await Task.Delay(1100);
+            Check(IsAbove(panel.Handle, other.Handle), "overlay stays above another topmost window");
+            Check((Native.GetWindowLongPtr(panel.Handle, -20).ToInt64() & 8) != 0, "native topmost flag restored");
+            Check(GetForegroundWindow() == other.Handle, "keeping overlay visible does not steal focus");
+        }
         board.Show();
         panel.Shown += async (_, _) =>
         {
             try
             {
+                await VerifyTopmost(demote: true);
                 // Controls need a live Windows message loop; keep these checks
                 // in the GUI suite so async console tests cannot inherit one.
                 using (var preview = new BoardPreview())
                 {
                     var recognized = new Recognition(ChessPosition.Parse(Start), true, 1, 1);
-                    preview.UpdateBoard(new BoardFrame(recognized, Rectangle.Empty, 1), true);
+                    var original = new BoardFrame(recognized, Rectangle.Empty, 1);
+                    preview.UpdateBoard(original, true);
                     Check(preview.PieceAtDisplaySquare(0, 0) == 'r' && preview.PieceAtDisplaySquare(7, 4) == 'K', "preview white-bottom mapping");
+                    preview.SetMoves(original, new Analysis("e2e4", "Ready"), new Analysis("e7e5", "Ready"));
+                    Check(preview.ArrowCount == 2, "both analysis results appear in preview");
                     preview.UpdateBoard(new BoardFrame(recognized with { WhiteBottom = false }, Rectangle.Empty, 1), true);
                     Check(preview.PieceAtDisplaySquare(0, 0) == 'R' && preview.PieceAtDisplaySquare(7, 3) == 'k', "preview black-bottom mapping");
+                    Check(preview.ArrowCount == 2, "orientation change keeps current-position arrows");
+                    preview.Size = new System.Drawing.Size(325, 355);
+                    using (var flipped = new Bitmap(preview.Width, preview.Height))
+                    {
+                        preview.DrawToBitmap(flipped, new Rectangle(0, 0, flipped.Width, flipped.Height));
+                        flipped.Save(Path.Combine(Path.GetDirectoryName(output)!, "preview-flipped.png"));
+                    }
+                    var changed = original with { Recognition = recognized with { Position = ChessPosition.Parse("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR") } };
+                    preview.UpdateBoard(changed, true);
+                    Check(preview.ArrowCount == 0, "changed position clears stale preview arrows");
+                    preview.SetMoves(original, new Analysis("e2e4", "Ready"), new Analysis("e7e5", "Ready"));
+                    Check(preview.ArrowCount == 0, "late results cannot update another preview position");
+                    preview.SetMoves(changed, new Analysis("e2e5", "Ready"), null);
+                    Check(preview.ArrowCount == 0, "illegal preview moves are rejected");
                     var uncertain = new BoardFrame(recognized with { MinConfidence = .2f }, Rectangle.Empty, 1);
                     preview.UpdateBoard(uncertain, true);
+                    preview.SetMoves(uncertain, new Analysis("e2e4", "Ready"), new Analysis("e7e5", "Ready"));
+                    Check(preview.ArrowCount == 0, "uncertain preview has no suggested arrows");
                     Check(!uncertain.IsReliable && preview.AccessibleDescription!.StartsWith("Uncertain"), "uncertain preview is inspectable but not analyzable");
                     preview.UpdateBoard(null, false);
                     Check(preview.Frame is null && preview.PieceAtDisplaySquare(0, 0) == '.', "paused preview clears stale pieces");
@@ -280,14 +325,21 @@ internal static class SelfTests
                 if (!paused && panel.CaptureCount >= 5 && panel.ArrowCount == 2)
                 {
                     timer.Stop();
+                    await VerifyTopmost(demote: false);
                     Check(panel.CurrentFrame?.Recognition.Position.Placement == Start, "live screen recognition");
                     Check(fake.Calls == 2, "live captures do not repeat API calls");
                     Check(panel.ArrowsClickThrough, "native click-through arrows");
                     Check(panel.ExcludesOwnWindows, "overlay excluded from captured screen");
                     Check(detectedBoard.Frame?.Recognition.Position.Placement == Start, "collapsed preview receives live detection");
+                    Check(detectedBoard.ArrowCount == 2, "collapsed preview receives both engine arrows");
                     int collapsedHeight = panel.Height;
+                    int rendersBeforeAnimation = detectedBoard.RenderCount;
                     var area = Screen.FromControl(panel).WorkingArea;
                     panel.Top = area.Bottom - panel.Height;
+                    var frameClock = Stopwatch.StartNew();
+                    var frameTimes = new List<double> { 0 };
+                    EventHandler sampleFrame = (_, _) => frameTimes.Add(frameClock.Elapsed.TotalMilliseconds);
+                    panel.SizeChanged += sampleFrame;
                     disclosure.PerformClick();
                     await Task.Delay(70);
                     int intermediateHeight = panel.Height;
@@ -296,8 +348,14 @@ internal static class SelfTests
                         panel.DrawToBitmap(shot, new Rectangle(0, 0, shot.Width, shot.Height));
                         shot.Save(Path.Combine(Path.GetDirectoryName(output)!, "preview-animation.png"));
                     }
-                    await Task.Delay(250);
+                    await Task.Delay(150);
                     int expandedHeight = panel.Height;
+                    panel.SizeChanged -= sampleFrame;
+                    previewFrames = frameTimes.Count - 1;
+                    previewLastFrameMs = frameTimes[^1];
+                    previewLargestFrameGapMs = frameTimes.Zip(frameTimes.Skip(1), (a, b) => b - a).DefaultIfEmpty().Max();
+                    await Task.Delay(100);
+                    Check(panel.Height == expandedHeight, "preview completes within the faster transition window");
                     Check(expandedHeight > collapsedHeight && intermediateHeight > collapsedHeight && intermediateHeight <= expandedHeight, "preview expands with animation");
                     Check(panel.Bottom <= area.Bottom && detectedBoard.Visible, "expanded preview stays on screen");
                     Check(disclosure.AccessibleName == "Hide detected board", "preview disclosure accessible state");
@@ -309,14 +367,16 @@ internal static class SelfTests
                     disclosure.PerformClick();
                     await Task.Delay(55);
                     disclosure.PerformClick();
-                    await Task.Delay(280);
+                    await Task.Delay(220);
                     Check(panel.Height == expandedHeight && detectedBoard.Visible, "mid-animation reversal reaches expanded state");
                     disclosure.PerformClick();
-                    await Task.Delay(280);
+                    await Task.Delay(220);
                     Check(panel.Height == collapsedHeight && !detectedBoard.Visible, "preview collapses fully");
+                    Check(detectedBoard.RenderCount - rendersBeforeAnimation <= 1, "animation reuses a cached board image");
                     power.PerformClick();
                     Check(!panel.IsRunning, "Off switch pauses capture");
                     Check(detectedBoard.Frame is null, "pause clears detected preview");
+                    Check(detectedBoard.ArrowCount == 0, "pause clears preview arrows");
                     capturesAtPause = panel.CaptureCount; pausedAt = watch.Elapsed.TotalSeconds; paused = true;
                     timer.Start();
                 }
@@ -324,7 +384,7 @@ internal static class SelfTests
                 {
                     Check(panel.CaptureCount == capturesAtPause, "Off stops captures");
                     Check(panel.ArrowCount == 0 && fake.Calls == 2, "Off clears arrows and stops requests");
-                    File.WriteAllText(output, JsonSerializer.Serialize(new { passed = true, captures = capturesAtPause, requests = fake.Calls, clickThrough = true, captureExclusion = true, bothArrows = true, offStopsCapture = true, depthControls = true, onOffSwitch = true, boardPreview = true, previewAnimation = true, previewReversal = true, dpi = panel.DeviceDpi, seconds = watch.Elapsed.TotalSeconds }, new JsonSerializerOptions { WriteIndented = true }));
+                    File.WriteAllText(output, JsonSerializer.Serialize(new { passed = true, captures = capturesAtPause, requests = fake.Calls, clickThrough = true, captureExclusion = true, bothArrows = true, offStopsCapture = true, depthControls = true, onOffSwitch = true, boardPreview = true, previewAnimation = true, previewReversal = true, cachedPreview = true, previewFrames, previewLastFrameMs, previewLargestFrameGapMs, alwaysOnTop = true, preservesForegroundFocus = true, dpi = panel.DeviceDpi, seconds = watch.Elapsed.TotalSeconds }, new JsonSerializerOptions { WriteIndented = true }));
                     exit = 0; timer.Stop(); close.PerformClick();
                 }
             }

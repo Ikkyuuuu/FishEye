@@ -33,7 +33,9 @@ Tests live in a separate executable project and are not bundled in the applicati
 
 Tests cover board detection, recognition, orientation, move legality, caching, request deduplication, cancellation, and retry backoff. The GUI test additionally verifies live screen capture, both arrows, click-through behavior, and pausing. Reports and generated test images go in `artifacts/test-results/`.
 
-The GUI test also opens and closes the detected-board preview, reverses its animation mid-transition, checks screen-edge placement, and verifies preview updates without extra engine requests. The preview renders the recognition result in a consistent piece style, including uncertain observations that are never sent for analysis. Pausing or losing the board clears it. Its 240ms expansion animation follows the Windows animation preference.
+The GUI test also opens and closes the detected-board preview, reverses its animation mid-transition, checks screen-edge placement, and verifies preview updates without extra engine requests. The preview renders the recognition result in a consistent piece style, including uncertain observations that are never sent for analysis. Pausing or losing the board clears it. Its 150ms expansion animation follows the Windows animation preference and responds immediately with an ease-out curve. Reversals shorten their duration to match the remaining distance. A cached board bitmap is prepared before the transition and reused until the position, moves, orientation, size, or DPI changes. Monitor geometry is calculated once per transition, and each frame batches movement and resizing into one window update.
+
+The preview uses embedded Chess.com Neo PNGs from `assets/pieces/neo/` and reuses the screen overlay's arrow renderer and analysis results. Position changes, uncertainty, pause, and depth changes clear its arrows; late results for another position are ignored. The GUI suite checks these cases and flipped orientation.
 
 GitHub Actions runs the deterministic tests and publishes a downloadable Windows build on pushes and pull requests. Interactive GUI tests and live API calls are opt-in local checks.
 
@@ -94,6 +96,8 @@ Screen images are processed in memory and are not saved during normal use. Only 
 The cache is stored at `%LOCALAPPDATA%\FishEyes\analysis-cache-v1.json`. Completed results survive restarts. Unchanged boards and previously analyzed positions reuse those results at the same depth. Concurrent requests share work; transient failures back off from 15 seconds to 5 minutes.
 
 Screens continue updating while the engine is working. Stale results cannot replace the current arrows. FishEyes excludes its own windows from capture, with a brief hide-and-capture fallback when Windows cannot exclude them.
+
+Both overlay windows reassert their topmost position on foreground-window changes, with a 750ms fallback check. This uses `SetWindowPos` without activation, movement, resizing, or showing hidden windows. The panel stays above its arrow layer, including while analysis is paused. The GUI test verifies recovery above another topmost window and preservation of foreground keyboard focus.
 
 ## Limitations
 
