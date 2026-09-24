@@ -1,0 +1,30 @@
+FishEyes - C# automatic chess overlay
+
+1. Open FishEyes.exe.
+2. Show a complete 2D chessboard on your screen.
+3. Set Search depth (1-15) and switch analysis On.
+   Use - / +, or type a value and press Enter.
+
+Blue arrow: White's best move, assuming White is to move.
+Orange arrow: Black's best move, assuming Black is to move.
+Both arrows analyze the current position independently.
+
+Capture runs about once per second. Wait for two matching captures and the
+engine response. Unchanged positions use a saved cache without more API calls.
+
+Switch Off to pause capture, cancel pending analysis and clear the arrows.
+Drag the FishEyes header to move the panel; use X or Alt+F4 to exit.
+Tab moves between controls; Space activates a focused button.
+
+No board crop or turn input is required. Arrows allow clicks through them.
+Only FEN positions and depth go to stockfish.online; screen images stay local.
+Internet is needed for new analysis. Python and a separate .NET installation
+are not required. Keep the licenses folder when sharing the application.
+
+Limits: a full, visible, axis-aligned board is required. Orientation is inferred
+from the piece arrangement. Unfamiliar themes or unusual endgames may not be
+recognized correctly. Castling and en passant rights are assumed unavailable.
+
+Cache: %LOCALAPPDATA%\FishEyes\analysis-cache-v1.json
+Windows x64 build. On a fresh PC, native dependencies may need Microsoft's
+Visual C++ 2015-2022 x64 redistributable.

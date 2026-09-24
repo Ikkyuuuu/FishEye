@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="#9de7ca" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round">
+  <title>FishEyes — an eye with a fish tail</title>
+  <polygon points="42,32 56,21 56,43" />
+  <ellipse cx="25" cy="32" rx="17" ry="12" />
+  <circle cx="25" cy="32" r="4.5" fill="#9de7ca" stroke="none" />
+</svg>

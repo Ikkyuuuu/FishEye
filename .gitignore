@@ -1,12 +1,24 @@
-.venv
-__pycache__
-grid.png
-out_squares
-data
-tools
-detect_board.py
-detedt_with_grid.py
-engine.py
-fen.py
-main.py
-recognize_pieces.py
+# .NET and IDE output
+**/bin/
+**/obj/
+.vs/
+.idea/
+*.user
+*.suo
+*.sln.docstates
+
+# Local builds, packages, and test reports
+/artifacts/
+/dist/
+TestResults/
+*.log
+
+# Local settings and credentials
+.env
+.env.*
+!.env.example
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
