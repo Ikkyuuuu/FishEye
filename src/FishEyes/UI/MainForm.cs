@@ -1,4 +1,5 @@
 using System.Drawing.Drawing2D;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace FishEyes;
@@ -14,6 +15,13 @@ public sealed class MainForm : Form
     private readonly Label detail = new() { Text = "Turn on to find your board", ForeColor = OverlayTheme.Muted, AutoSize = false };
     private readonly Label depthLabel = new() { Text = "Search depth", TextAlign = ContentAlignment.MiddleLeft, AutoSize = false };
     private readonly ToolTip tips = new() { AutoPopDelay = 15000, InitialDelay = 450, ReshowDelay = 150 };
+    private readonly BoardDisclosure disclosure = new() { TabIndex = 3 };
+    private readonly BoardPreview boardPreview = new();
+    private readonly Panel previewClip = new() { TabStop = false };
+    private readonly System.Windows.Forms.Timer previewAnimation = new() { Interval = 16 };
+    private readonly Stopwatch previewClock = new();
+    private float previewProgress, previewStart;
+    private bool previewExpanded;
     private readonly System.Windows.Forms.Timer timer = new() { Interval = 1000 };
     private readonly ScreenScanner scanner = new();
     private readonly EngineService engine;
@@ -39,7 +47,7 @@ public sealed class MainForm : Form
         // All geometry is laid out from DeviceDpi in LayoutPanel. Mixing native
         // autoscaling with custom-painted geometry can clip the move cards.
         AutoScaleMode = AutoScaleMode.None;
-        ClientSize = new Size(300, 252);
+        ClientSize = new Size(300, 300);
         FormBorderStyle = FormBorderStyle.None;
         MaximizeBox = false; TopMost = true;
         DoubleBuffered = true;
@@ -52,13 +60,17 @@ public sealed class MainForm : Form
         status.TextAlign = ContentAlignment.MiddleLeft;
         detail.Font = new Font("Segoe UI", 8);
         detail.AutoEllipsis = true;
-        Controls.AddRange([toggle, depthLabel, depth, status, whiteLabel, blackLabel, detail, close]);
+        previewClip.Controls.Add(boardPreview);
+        Controls.AddRange([toggle, depthLabel, depth, status, whiteLabel, blackLabel, detail, close, disclosure, previewClip]);
         LayoutPanel();
         tips.SetToolTip(toggle, "Start or pause automatic analysis");
         tips.SetToolTip(depth, "Depth 1–15. Higher values search further and may take longer.");
         tips.SetToolTip(close, "Close FishEyes (Alt+F4)");
         tips.SetToolTip(whiteLabel, "Blue arrow · assumes White is to move");
         tips.SetToolTip(blackLabel, "Orange arrow · assumes Black is to move");
+        tips.SetToolTip(disclosure, "Show the pieces FishEyes detected. Uncertain positions are shown for inspection only.");
+        disclosure.Click += (_, _) => TogglePreview();
+        previewAnimation.Tick += (_, _) => AdvancePreview();
         close.Click += (_, _) => Close();
         toggle.Click += (_, _) => SetRunning(!IsRunning);
         depth.ValueChanged += (_, _) => { ResetView(); if (IsRunning) status.Text = "Checking position…"; };
@@ -72,7 +84,6 @@ public sealed class MainForm : Form
         int Px(int value) => (int)Math.Round(value * scale);
         void Place(Control control, int x, int y, int width, int height) => control.SetBounds(Px(x), Px(y), Px(width), Px(height));
         SuspendLayout();
-        ClientSize = new Size(Px(300), Px(252));
         Place(close, 256, 12, 28, 28);
         Place(toggle, 220, 64, 60, 30);
         Place(status, 20, 65, 190, 28);
@@ -81,7 +92,43 @@ public sealed class MainForm : Form
         Place(whiteLabel, 20, 156, 124, 62);
         Place(blackLabel, 156, 156, 124, 62);
         Place(detail, 20, 230, 260, 18);
+        Place(disclosure, 20, 260, 260, 28);
+        ApplyPreviewLayout();
         ResumeLayout();
+    }
+    private void TogglePreview()
+    {
+        AdvancePreview();
+        previewExpanded = !previewExpanded;
+        disclosure.AccessibleName = previewExpanded ? "Hide detected board" : "Show detected board";
+        previewStart = previewProgress;
+        if (Visible && OverlayTheme.AnimationsEnabled)
+        { previewClock.Restart(); previewAnimation.Start(); }
+        else
+        { previewAnimation.Stop(); previewClock.Reset(); previewProgress = previewExpanded ? 1 : 0; ApplyPreviewLayout(); }
+    }
+    private void AdvancePreview()
+    {
+        if (!previewClock.IsRunning) return;
+        float t = (float)Math.Clamp(previewClock.Elapsed.TotalMilliseconds / 240, 0, 1);
+        float eased = 1 - MathF.Pow(1 - t, 3);
+        previewProgress = previewStart + ((previewExpanded ? 1 : 0) - previewStart) * eased;
+        if (t >= 1) { previewAnimation.Stop(); previewClock.Reset(); }
+        ApplyPreviewLayout();
+    }
+    private void ApplyPreviewLayout()
+    {
+        float s = DeviceDpi / 96f;
+        int Px(int value) => (int)Math.Round(value * s);
+        var area = Screen.FromControl(this).WorkingArea;
+        int extra = Math.Min(Px(296), Math.Max(Px(80), area.Height - Px(316)));
+        int revealed = (int)Math.Round(extra * previewProgress);
+        previewClip.SetBounds(Px(20), Px(300), Px(260), revealed);
+        boardPreview.SetBounds(0, 0, Px(260), extra - Px(12));
+        previewClip.Visible = revealed > 0;
+        disclosure.Progress = previewProgress;
+        ClientSize = new Size(Px(300), Px(300) + revealed);
+        if (Visible && Bottom > area.Bottom) Top = Math.Max(area.Top, area.Bottom - Height);
     }
     protected override void OnShown(EventArgs e)
     {
@@ -115,6 +162,7 @@ public sealed class MainForm : Form
         g.DrawPath(border, shape);
         using var separator = new Pen(OverlayTheme.Border);
         g.DrawLine(separator, 20 * s, 52 * s, Width - 20 * s, 52 * s);
+        g.DrawLine(separator, 20 * s, 254 * s, Width - 20 * s, 254 * s);
         g.InterpolationMode = InterpolationMode.HighQualityBicubic;
         g.DrawImage(Branding.Logo, new RectangleF(16 * s, 10 * s, 38 * s, 38 * s));
         using var title = new Font("Segoe UI", 11, FontStyle.Bold);
@@ -150,13 +198,14 @@ public sealed class MainForm : Form
         if (running) { timer.Start(); _ = CaptureTickAsync(); }
         else { timer.Stop(); engine.CancelPending(); }
     }
-    private void ResetView()
+    private void ResetView(bool clearPreview = true)
     {
         generation++; stableFrames = 0;
         lastPosition = currentKey = analyzingKey = null;
         currentFrame = null; whiteResult = blackResult = null;
         arrows.Clear();
         whiteLabel.Text = "—"; blackLabel.Text = "—";
+        if (clearPreview) boardPreview.UpdateBoard(null, IsRunning);
     }
     private async Task CaptureTickAsync()
     {
@@ -174,11 +223,13 @@ public sealed class MainForm : Form
             BoardFrame? frame = await captureTask;
             CaptureCount++;
             if (closing || !IsRunning || capturedGeneration != generation) return;
+            boardPreview.UpdateBoard(scanner.LastObservation, IsRunning);
             if (frame is null)
             {
-                ResetView();
-                status.Text = "Finding board…";
-                detail.Text = "Keep the full chessboard visible";
+                ResetView(clearPreview: false);
+                bool uncertain = scanner.LastObservation is not null;
+                status.Text = uncertain ? "Check detected pieces" : "Finding board…";
+                detail.Text = uncertain ? "Open Detected board to inspect" : "Keep the full chessboard visible";
                 return;
             }
             currentFrame = frame;
@@ -259,7 +310,7 @@ public sealed class MainForm : Form
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
         closing = true; IsRunning = false; generation++;
-        timer.Stop(); timer.Dispose(); tips.Dispose(); arrows.Dispose(); engine.Dispose();
+        timer.Stop(); timer.Dispose(); previewAnimation.Stop(); previewAnimation.Dispose(); tips.Dispose(); arrows.Dispose(); engine.Dispose();
         if (captureTask is { IsCompleted: false } task) _ = task.ContinueWith(_ => scanner.Dispose());
         else scanner.Dispose();
         base.OnFormClosed(e);

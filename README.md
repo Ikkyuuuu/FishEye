@@ -6,7 +6,7 @@ Have you ever looked at a chessboard and wondered what the best next move is?
 
 FishEye watches your screen, detects the pieces, and asks Stockfish to figure it out. Then it draws an arrow from the piece to where it should move. Just keep the board visible and turn it on.<br><br>
 
-<img src="docs/images/overlay.png" width="100%" alt="FishEyes overlay"><br><br>
+<img src="docs/images/overlay.png" width="100%" alt="FishEyes overlay with the detected board preview expanded"><br><br>
 
 ## Key Feature
 
@@ -15,6 +15,7 @@ FishEye watches your screen, detects the pieces, and asks Stockfish to figure it
 - Checks your screen about once every second.
 - Blue arrow for White, orange arrow for Black.
 - Adjustable search depth from 1 to 15.
+- Animated **Detected board** dropdown to check the pieces FishEye sees.
 - Remembers analyzed positions, so it doesn't keep asking the API the same thing at the same depth.
 
 Both arrows use the current board, each assuming that side is to move.<br><br>
@@ -33,6 +34,8 @@ And on a different board. At depth 12, White gets **b7 → f7** and Black gets *
 
 Using a different skin? FishEye automatically recognizes 69 Chess.com 2D piece sets, including the available bot and event skins. The templates are bundled, so there's nothing extra to download or select.
 
+Recognition is also improved for the Bases skin at different board sizes, including highlighted squares and move-review badges.
+
 Here's Band Class. At depth 12, White gets **c3 → d5** and Black gets **c7 → c6**.<br><br>
 
 <img src="docs/images/move-arrows-band-class.png" width="100%" alt="Band Class skin with a blue knight arrow from c3 to d5 and an orange pawn arrow from c7 to c6"><br><br>
@@ -45,6 +48,10 @@ Here's Band Class. At depth 12, White gets **c3 → d5** and Black gets **c7 →
 4. Wait for the arrows. Higher depth may take longer.
 
 Switch **Off** to pause, drag the FishEye header to move it, or press **×** to close.<br><br>
+
+Wanna check if the pieces were read correctly? Click **Detected board** at the bottom. The preview slides open, updates as you play, and follows the board's orientation. Click again to tuck it away.
+
+Uncertain detections are labeled in the preview and aren't sent for analysis. Switching **Off** clears the preview too.
 
 ## Build from Source
 

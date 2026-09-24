@@ -11,7 +11,11 @@ public sealed class ThemeRecognizer
     private const int Size = 40;
     private const string Pieces = "PNBRQKpnbrqk";
     private sealed record Theme(string Name, byte[][] Sprites);
-    public sealed record Match(char[] Pieces, float Minimum, float Mean, string Theme, double Error);
+    public sealed record SquareMatch(char Piece, double Error, double Margin, float Quality, int[] Background);
+    public sealed record Match(char[] Pieces, float Minimum, float Mean, string Theme, double Error)
+    {
+        public SquareMatch[] Squares { get; init; } = [];
+    }
     private sealed record Tile(byte[] Pixels, int[] Background);
     private static readonly Lazy<Theme[]> Themes = new(Load);
     private Theme? lastTheme;
@@ -29,6 +33,15 @@ public sealed class ThemeRecognizer
             string name = reader.ReadString();
             byte[][] sprites = Enumerable.Range(0, 12).Select(_ => reader.ReadBytes(Size * Size * 4)).ToArray();
             if (sprites.Any(s => s.Length != Size * Size * 4)) throw new InvalidDataException("Truncated theme pack.");
+            foreach (var sprite in sprites)
+            {
+                // Match browser-resampled outlines at the same bandwidth as
+                // captured tiles. Keep RGB premultiplied while filtering alpha.
+                using var sample = new Mat(Size, Size, MatType.CV_8UC4);
+                Marshal.Copy(sprite, 0, sample.Data, sprite.Length);
+                Cv2.GaussianBlur(sample, sample, new OpenCvSharp.Size(5, 5), 1);
+                Marshal.Copy(sample.Data, sprite, 0, sprite.Length);
+            }
             result[i] = new(name, sprites);
         }
         return result;
@@ -44,6 +57,9 @@ public sealed class ThemeRecognizer
             int right = box.X + (s % 8 + 1) * box.Width / 8, bottom = box.Y + (s / 8 + 1) * box.Height / 8;
             using var tile = new Mat(screen, new Rect(x, y, right - x, bottom - y));
             Cv2.Resize(tile, resized, new OpenCvSharp.Size(Size, Size), 0, 0, InterpolationFlags.Area);
+            // Sharp one-pixel strokes vary with browser zoom and fractional
+            // square sizes. Symmetric filtering preserves the piece silhouette.
+            Cv2.GaussianBlur(resized, resized, new OpenCvSharp.Size(5, 5), 1);
             var pixels = new byte[Size * Size * 3]; Marshal.Copy(resized.Data, pixels, 0, pixels.Length);
             var background = new int[3];
             for (int c = 0; c < 3; c++)
@@ -81,6 +97,7 @@ public sealed class ThemeRecognizer
     private static Match Evaluate(Theme theme, Tile[] tiles)
     {
         var pieces = new char[64]; var quality = new float[64]; double total = 0;
+        var squares = new SquareMatch[64];
         for (int s = 0; s < 64; s++)
         {
             var errors = new double[13];
@@ -100,8 +117,9 @@ public sealed class ThemeRecognizer
             quality[s] = error > 14 || margin < .35 || margin / (error + 1) < .08
                 ? 0 : (float)(1 - error / 255);
             total += error;
+            squares[s] = new(pieces[s], error, margin, quality[s], tiles[s].Background);
         }
-        return new(pieces, quality.Min(), quality.Average(), theme.Name, total / 64);
+        return new(pieces, quality.Min(), quality.Average(), theme.Name, total / 64) { Squares = squares };
     }
 
     private static double Error(Tile tile, byte[]? sprite, int dx, int dy, int step)

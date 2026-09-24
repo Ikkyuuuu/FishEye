@@ -35,16 +35,22 @@ public static class ScreenCapture
     }
 }
 
-public record BoardFrame(Recognition Recognition, Rectangle Bounds, double GridScore);
+public record BoardFrame(Recognition Recognition, Rectangle Bounds, double GridScore)
+{
+    public bool IsReliable => Recognition.MinConfidence >= .60 && Recognition.MeanConfidence >= .95
+        && (Recognition.Position.InvalidReason(true) is null || Recognition.Position.InvalidReason(false) is null);
+}
 
 public sealed class ScreenScanner : IDisposable
 {
     private readonly BoardDetector detector = new();
     private readonly Lazy<PieceRecognizer> recognizer = new(() => new PieceRecognizer());
     private BoardFrame? previous;
+    public BoardFrame? LastObservation { get; private set; }
     public BoardFrame? Scan(Rectangle[] monitors)
     {
         BoardFrame? best = null;
+        LastObservation = null;
         foreach (var monitor in monitors)
         {
             using var screen = ScreenCapture.Capture(monitor);
@@ -53,13 +59,13 @@ public sealed class ScreenScanner : IDisposable
             var board = detector.Detect(screen, old);
             if (board is null) continue;
             var recognition = recognizer.Value.Recognize(screen, board.Bounds, previous?.Recognition);
-            if (recognition.MinConfidence < .60 || recognition.MeanConfidence < .95) continue;
-            if (recognition.Position.InvalidReason(true) is not null && recognition.Position.InvalidReason(false) is not null) continue;
             var bounds = new Rectangle(monitor.X + board.Bounds.X, monitor.Y + board.Bounds.Y, board.Bounds.Width, board.Bounds.Height);
             var frame = new BoardFrame(recognition, bounds, board.Score);
+            if (LastObservation is null || frame.Bounds.Width * frame.GridScore > LastObservation.Bounds.Width * LastObservation.GridScore) LastObservation = frame;
+            if (!frame.IsReliable) continue;
             if (best is null || frame.Bounds.Width * frame.GridScore > best.Bounds.Width * best.GridScore) best = frame;
         }
-        if (best is not null) previous = best;
+        if (best is not null) previous = LastObservation = best;
         return best;
     }
     public void Dispose() { if (recognizer.IsValueCreated) recognizer.Value.Dispose(); }

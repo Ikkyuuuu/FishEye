@@ -21,6 +21,8 @@ internal static class TestProgram
             if (args.Contains("--gui-test")) return SelfTests.RunGui(sample, output);
             var report = args.Contains("--build-themes")
                 ? ThemePack.Build(sample, Path.GetDirectoryName(output)!)
+                : args.Contains("--inspect-image")
+                ? ImageExample.Inspect(sample)
                 : args.Contains("--theme-tests")
                 ? ThemeTests.Run(sample, Path.GetDirectoryName(output)!)
                 : args.Contains("--analyze-image")

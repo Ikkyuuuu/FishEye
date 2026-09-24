@@ -7,6 +7,10 @@ namespace FishEyes;
 
 internal static class OverlayTheme
 {
+    [DllImport("user32.dll", EntryPoint = "SystemParametersInfoW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SystemParametersInfo(uint action, uint parameter, out int value, uint flags);
+    public static bool AnimationsEnabled => !SystemParametersInfo(0x1042, 0, out int enabled, 0) || enabled != 0;
     public static readonly Color Background = Color.FromArgb(20, 24, 30);
     public static readonly Color Surface = Color.FromArgb(30, 35, 43);
     public static readonly Color Border = Color.FromArgb(47, 54, 64);
@@ -36,10 +40,6 @@ internal sealed class OverlayButton : Button
     private readonly Stopwatch animationClock = new();
     private float progress, animationStart;
     private const double DurationMs = 190;
-    [DllImport("user32.dll", EntryPoint = "SystemParametersInfoW")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool SystemParametersInfo(uint action, uint parameter, out int value, uint flags);
-    private static bool AnimationsEnabled => !SystemParametersInfo(0x1042, 0, out int enabled, 0) || enabled != 0;
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public bool Active
     {
@@ -51,7 +51,7 @@ internal sealed class OverlayButton : Button
             active = value;
             AccessibleName = value ? "Turn off analysis" : "Turn on analysis";
             animationStart = progress;
-            if (IsHandleCreated && Visible && AnimationsEnabled)
+            if (IsHandleCreated && Visible && OverlayTheme.AnimationsEnabled)
             { animationClock.Restart(); animation.Start(); }
             else { animation.Stop(); animationClock.Reset(); progress = value ? 1 : 0; }
             Invalidate();

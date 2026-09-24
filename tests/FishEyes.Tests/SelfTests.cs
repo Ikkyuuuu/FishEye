@@ -99,6 +99,26 @@ internal static class SelfTests
             Check(changed.Position.Placement == Start && changed.MinConfidence >= .60 && changed.MeanConfidence >= .95, "changing skin invalidates cached theme automatically");
         }
         checks.Add("Band Class screenshot regression, textured grid, cached recognition and live skin changes");
+        const string basesPosition = "r1bqkbnr/ppp2pp1/2np4/4p2p/3PP3/2N2N2/PPP2PPP/R1BQKB1R";
+        using (var review = Cv2.ImDecode(File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Fixtures", "bases-review.png")), ImreadModes.Color))
+        {
+            foreach (double scale in new[] { 1.0, .7, .5 })
+            {
+                using var resized = new Mat();
+                Cv2.Resize(review, resized, new OpenCvSharp.Size(), scale, scale, InterpolationFlags.Area);
+                var board = detector.Detect(resized);
+                Check(board is not null, $"Bases review grid at scale {scale}");
+                var recognized = recognizer.Recognize(resized, board!.Bounds);
+                Check(recognized.Theme == "Bases" && recognized.Position.Placement == basesPosition,
+                    $"Bases review exact position at {scale}: {recognized.Position.Placement}");
+                Check(recognized.WhiteBottom && recognized.MinConfidence >= .60 && recognized.MeanConfidence >= .95,
+                    $"Bases review capture gate at {scale}");
+                Check(recognized.Position.Squares[23] == '.', "review badge on h6 is not a piece");
+                var repeated = recognizer.Recognize(resized, board.Bounds, recognized);
+                Check(repeated.Position.Placement == basesPosition && repeated.Theme == "Bases", "Bases cached theme recognition");
+            }
+        }
+        checks.Add("Bases review screenshot at three scales, thin outlines, highlights and move badge");
         var bounds = new Rectangle(-600, 120, 640, 640);
         Check(ArrowOverlay.SquareCenter("e2", bounds, true) == new PointF(-240, 640), "negative monitor coordinates");
         Check(ArrowOverlay.SquareCenter("e7", bounds, false) == new PointF(-320, 640), "flipped arrow coordinates");
@@ -193,12 +213,29 @@ internal static class SelfTests
         var increase = controls.OfType<Button>().Single(button => button.AccessibleName == "Increase search depth");
         var decrease = controls.OfType<Button>().Single(button => button.AccessibleName == "Decrease search depth");
         var close = controls.OfType<Button>().Single(button => button.AccessibleName == "Close FishEyes");
+        var disclosure = controls.OfType<Button>().Single(button => button.AccessibleName == "Show detected board");
+        var detectedBoard = controls.OfType<BoardPreview>().Single();
         var depthInput = controls.OfType<TextBox>().Single();
         board.Show();
         panel.Shown += async (_, _) =>
         {
             try
             {
+                // Controls need a live Windows message loop; keep these checks
+                // in the GUI suite so async console tests cannot inherit one.
+                using (var preview = new BoardPreview())
+                {
+                    var recognized = new Recognition(ChessPosition.Parse(Start), true, 1, 1);
+                    preview.UpdateBoard(new BoardFrame(recognized, Rectangle.Empty, 1), true);
+                    Check(preview.PieceAtDisplaySquare(0, 0) == 'r' && preview.PieceAtDisplaySquare(7, 4) == 'K', "preview white-bottom mapping");
+                    preview.UpdateBoard(new BoardFrame(recognized with { WhiteBottom = false }, Rectangle.Empty, 1), true);
+                    Check(preview.PieceAtDisplaySquare(0, 0) == 'R' && preview.PieceAtDisplaySquare(7, 3) == 'k', "preview black-bottom mapping");
+                    var uncertain = new BoardFrame(recognized with { MinConfidence = .2f }, Rectangle.Empty, 1);
+                    preview.UpdateBoard(uncertain, true);
+                    Check(!uncertain.IsReliable && preview.AccessibleDescription!.StartsWith("Uncertain"), "uncertain preview is inspectable but not analyzable");
+                    preview.UpdateBoard(null, false);
+                    Check(preview.Frame is null && preview.PieceAtDisplaySquare(0, 0) == '.', "paused preview clears stale pieces");
+                }
                 increase.PerformClick(); Check(depthInput.Text == "13", "depth increment button");
                 decrease.PerformClick(); Check(depthInput.Text == "12", "depth decrement button");
                 depthInput.Focus(); depthInput.Text = "99"; power.Focus();
@@ -235,31 +272,59 @@ internal static class SelfTests
                 panel.Close();
             }
         };
-        timer.Tick += (_, _) =>
+        timer.Tick += async (_, _) =>
         {
             try
             {
                 if (watch.Elapsed.TotalSeconds > 40) throw new Exception($"GUI test timeout: captures={panel.CaptureCount}, arrows={panel.ArrowCount}, requests={fake.Calls}, board={panel.CurrentFrame?.Recognition.Position.Placement}");
                 if (!paused && panel.CaptureCount >= 5 && panel.ArrowCount == 2)
                 {
+                    timer.Stop();
                     Check(panel.CurrentFrame?.Recognition.Position.Placement == Start, "live screen recognition");
                     Check(fake.Calls == 2, "live captures do not repeat API calls");
                     Check(panel.ArrowsClickThrough, "native click-through arrows");
                     Check(panel.ExcludesOwnWindows, "overlay excluded from captured screen");
+                    Check(detectedBoard.Frame?.Recognition.Position.Placement == Start, "collapsed preview receives live detection");
+                    int collapsedHeight = panel.Height;
+                    var area = Screen.FromControl(panel).WorkingArea;
+                    panel.Top = area.Bottom - panel.Height;
+                    disclosure.PerformClick();
+                    await Task.Delay(70);
+                    int intermediateHeight = panel.Height;
+                    using (var shot = new Bitmap(panel.Width, panel.Height))
+                    {
+                        panel.DrawToBitmap(shot, new Rectangle(0, 0, shot.Width, shot.Height));
+                        shot.Save(Path.Combine(Path.GetDirectoryName(output)!, "preview-animation.png"));
+                    }
+                    await Task.Delay(250);
+                    int expandedHeight = panel.Height;
+                    Check(expandedHeight > collapsedHeight && intermediateHeight > collapsedHeight && intermediateHeight <= expandedHeight, "preview expands with animation");
+                    Check(panel.Bottom <= area.Bottom && detectedBoard.Visible, "expanded preview stays on screen");
+                    Check(disclosure.AccessibleName == "Hide detected board", "preview disclosure accessible state");
                     using (var preview = new Bitmap(panel.Width, panel.Height))
                     {
                         panel.DrawToBitmap(preview, new Rectangle(0, 0, panel.Width, panel.Height));
                         preview.Save(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(output))!, "overlay.png"));
                     }
+                    disclosure.PerformClick();
+                    await Task.Delay(55);
+                    disclosure.PerformClick();
+                    await Task.Delay(280);
+                    Check(panel.Height == expandedHeight && detectedBoard.Visible, "mid-animation reversal reaches expanded state");
+                    disclosure.PerformClick();
+                    await Task.Delay(280);
+                    Check(panel.Height == collapsedHeight && !detectedBoard.Visible, "preview collapses fully");
                     power.PerformClick();
                     Check(!panel.IsRunning, "Off switch pauses capture");
+                    Check(detectedBoard.Frame is null, "pause clears detected preview");
                     capturesAtPause = panel.CaptureCount; pausedAt = watch.Elapsed.TotalSeconds; paused = true;
+                    timer.Start();
                 }
                 if (paused && watch.Elapsed.TotalSeconds - pausedAt > 2.5)
                 {
                     Check(panel.CaptureCount == capturesAtPause, "Off stops captures");
                     Check(panel.ArrowCount == 0 && fake.Calls == 2, "Off clears arrows and stops requests");
-                    File.WriteAllText(output, JsonSerializer.Serialize(new { passed = true, captures = capturesAtPause, requests = fake.Calls, clickThrough = true, captureExclusion = true, bothArrows = true, offStopsCapture = true, depthControls = true, onOffSwitch = true, dpi = panel.DeviceDpi, seconds = watch.Elapsed.TotalSeconds }, new JsonSerializerOptions { WriteIndented = true }));
+                    File.WriteAllText(output, JsonSerializer.Serialize(new { passed = true, captures = capturesAtPause, requests = fake.Calls, clickThrough = true, captureExclusion = true, bothArrows = true, offStopsCapture = true, depthControls = true, onOffSwitch = true, boardPreview = true, previewAnimation = true, previewReversal = true, dpi = panel.DeviceDpi, seconds = watch.Elapsed.TotalSeconds }, new JsonSerializerOptions { WriteIndented = true }));
                     exit = 0; timer.Stop(); close.PerformClick();
                 }
             }

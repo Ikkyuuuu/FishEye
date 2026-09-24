@@ -33,6 +33,8 @@ Tests live in a separate executable project and are not bundled in the applicati
 
 Tests cover board detection, recognition, orientation, move legality, caching, request deduplication, cancellation, and retry backoff. The GUI test additionally verifies live screen capture, both arrows, click-through behavior, and pausing. Reports and generated test images go in `artifacts/test-results/`.
 
+The GUI test also opens and closes the detected-board preview, reverses its animation mid-transition, checks screen-edge placement, and verifies preview updates without extra engine requests. The preview renders the recognition result in a consistent piece style, including uncertain observations that are never sent for analysis. Pausing or losing the board clears it. Its 240ms expansion animation follows the Windows animation preference.
+
 GitHub Actions runs the deterministic tests and publishes a downloadable Windows build on pushes and pull requests. Interactive GUI tests and live API calls are opt-in local checks.
 
 ### Analyze an image
@@ -44,6 +46,14 @@ dotnet run --project tests/FishEyes.Tests -c Release -- --analyze-image --sample
 ```
 
 This uses depth 12 and saves a recognition/analysis report plus `move-arrows.png` beside the report. It uses the application's own arrow renderer and checks recognition confidence and move legality before producing the image.
+
+To diagnose a detection or recognition failure without calling the engine:
+
+```powershell
+dotnet run --project tests/FishEyes.Tests -c Release -- --inspect-image --sample "path/to/board.png" --output artifacts/inspection/report.json
+```
+
+The report includes grid bounds, matched theme, each square's match error and runner-up margin, and the final recognized position.
 
 ## Project structure
 
@@ -72,6 +82,8 @@ Generated build output, IDE files, and test reports are ignored by Git. The root
 Recognition first compares each square against a consistent Chess.com theme. A coarse pass ranks the bundled sets, then full comparisons refine the best three with small positional offsets. Transparent sprites are composited against the estimated square color, allowing textured and highlighted boards. Ambiguous or poor template matches are rejected. The last successful theme is tried first on subsequent frames; changing skins triggers another catalog search. The original ONNX classifier provides a fallback for other artwork.
 
 Grid bounds are refined against the actual color transitions at native screen resolution, avoiding the extra pixel introduced by contour outlines. Template confidence values are fit scores, not calibrated probabilities.
+
+Captured tiles and premultiplied sprite templates receive the same light Gaussian smoothing at 40px resolution. This reduces thin-outline differences caused by browser scaling without relaxing the absolute-error or ambiguity gates. Regression fixtures include a Bases board with highlighted squares and a review badge, checked at three sizes.
 
 The bundled pack covers 69 distinguishable 2D sets. See [theme coverage and refresh instructions](../assets/themes/README.md) for sources, exclusions, and the full synthetic test suite. Ordinary startup and recognition do not download images or contact Chess.com.
 

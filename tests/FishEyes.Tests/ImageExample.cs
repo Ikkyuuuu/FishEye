@@ -5,6 +5,18 @@ namespace FishEyes;
 
 internal static class ImageExample
 {
+    public static object Inspect(string input)
+    {
+        using var source = Cv2.ImDecode(File.ReadAllBytes(input), ImreadModes.Color);
+        var board = new BoardDetector().Detect(source) ?? throw new InvalidOperationException("No board detected.");
+        var match = new ThemeRecognizer().Recognize(source, board.Bounds);
+        using var recognizer = new PieceRecognizer();
+        var result = recognizer.Recognize(source, board.Bounds);
+        return new { bounds = board.Bounds.ToString(), board.Score, match.Theme, match.Error, match.Minimum, match.Mean,
+            rawPlacement = new ChessPosition(match.Pieces).Placement,
+            squares = match.Squares.Select((s, i) => new { square = $"{(char)('a' + i % 8)}{8 - i / 8}", s.Piece, s.Error, s.Margin, s.Quality, s.Background }),
+            result = new { result.Position.Placement, result.Theme, result.MinConfidence, result.MeanConfidence } };
+    }
     public static async Task<object> AnalyzeAsync(string input, string outputDirectory)
     {
         using var source = Cv2.ImDecode(File.ReadAllBytes(input), ImreadModes.Color);
