@@ -35,6 +35,16 @@ Tests cover board detection, recognition, orientation, move legality, caching, r
 
 GitHub Actions runs the deterministic tests and publishes a downloadable Windows build on pushes and pull requests. Interactive GUI tests and live API calls are opt-in local checks.
 
+### Analyze an image
+
+To run board detection, recognition, and real engine analysis on another image:
+
+```powershell
+dotnet run --project tests/FishEyes.Tests -c Release -- --analyze-image --sample "path/to/board.png" --output artifacts/image-example/analysis.json
+```
+
+This uses depth 12 and saves a recognition/analysis report plus `move-arrows.png` beside the report. It uses the application's own arrow renderer and checks recognition confidence and move legality before producing the image.
+
 ## Project structure
 
 ```text

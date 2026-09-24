@@ -18,6 +18,16 @@ FishEye watches your screen, detects the pieces, and asks Stockfish to figure it
 
 Both arrows use the current board, each assuming that side is to move.<br><br>
 
+## Move Suggestion
+
+Here's what it looks like from the starting position.<br><br>
+
+<img src="docs/images/move-arrows.png" width="100%" alt="Starting position with move suggestions for White and Black"><br><br>
+
+And on a different board. At depth 12, White gets **b7 → f7** and Black gets **a8 → c8**.<br><br>
+
+<img src="docs/images/move-arrows-2.png" width="100%" alt="White rook moves from b7 to f7; Black rook moves from a8 to c8"><br><br>
+
 ## How to Use
 
 1. Open `FishEyes.exe`.

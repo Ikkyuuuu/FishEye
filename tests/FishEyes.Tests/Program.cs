@@ -19,7 +19,9 @@ internal static class TestProgram
         try
         {
             if (args.Contains("--gui-test")) return SelfTests.RunGui(sample, output);
-            var report = SelfTests.RunAsync(sample, args.Contains("--live-api"), Path.GetDirectoryName(output)!).GetAwaiter().GetResult();
+            var report = args.Contains("--analyze-image")
+                ? ImageExample.AnalyzeAsync(sample, Path.GetDirectoryName(output)!).GetAwaiter().GetResult()
+                : SelfTests.RunAsync(sample, args.Contains("--live-api"), Path.GetDirectoryName(output)!).GetAwaiter().GetResult();
             string json = JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(output, json);
             Console.WriteLine(json);
