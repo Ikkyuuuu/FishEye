@@ -19,7 +19,11 @@ internal static class TestProgram
         try
         {
             if (args.Contains("--gui-test")) return SelfTests.RunGui(sample, output);
-            var report = args.Contains("--analyze-image")
+            var report = args.Contains("--build-themes")
+                ? ThemePack.Build(sample, Path.GetDirectoryName(output)!)
+                : args.Contains("--theme-tests")
+                ? ThemeTests.Run(sample, Path.GetDirectoryName(output)!)
+                : args.Contains("--analyze-image")
                 ? ImageExample.AnalyzeAsync(sample, Path.GetDirectoryName(output)!).GetAwaiter().GetResult()
                 : SelfTests.RunAsync(sample, args.Contains("--live-api"), Path.GetDirectoryName(output)!).GetAwaiter().GetResult();
             string json = JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true });

@@ -52,19 +52,28 @@ FishEyes.slnx
 src/FishEyes/
   Core/             Chess positions and move validation
   Services/         Screen capture and cached engine requests
-  Vision/           Grid detection and ONNX piece recognition
+  Vision/           Grid detection, theme matching and ONNX recognition
   UI/               Control panel and arrow overlay
   Program.cs        Application entry point
 tests/FishEyes.Tests/
   Fixtures/         Sample board used by tests
 assets/models/      Bundled ONNX model
+assets/themes/      Bundled Chess.com templates and source manifest
 scripts/            Build and test entry points
 docs/               User guide and screenshots
 licenses/           Third-party notices
 .github/workflows/  Windows CI build
 ```
 
-Generated binaries, IDE files, and test reports are ignored by Git. Publish executables through GitHub Releases or Actions artifacts; commit the source, model, fixture, and documentation.
+Generated build output, IDE files, and test reports are ignored by Git. The root `FishEyes.exe` is a checked-in standalone build; also publish release executables through GitHub Releases or Actions artifacts.
+
+## Piece themes
+
+Recognition first compares each square against a consistent Chess.com theme. A coarse pass ranks the bundled sets, then full comparisons refine the best three with small positional offsets. Transparent sprites are composited against the estimated square color, allowing textured and highlighted boards. Ambiguous or poor template matches are rejected. The last successful theme is tried first on subsequent frames; changing skins triggers another catalog search. The original ONNX classifier provides a fallback for other artwork.
+
+Grid bounds are refined against the actual color transitions at native screen resolution, avoiding the extra pixel introduced by contour outlines. Template confidence values are fit scores, not calibrated probabilities.
+
+The bundled pack covers 69 distinguishable 2D sets. See [theme coverage and refresh instructions](../assets/themes/README.md) for sources, exclusions, and the full synthetic test suite. Ordinary startup and recognition do not download images or contact Chess.com.
 
 ## Capture, API, and cache
 

@@ -11,6 +11,7 @@ FishEye watches your screen, detects the pieces, and asks Stockfish to figure it
 ## Key Feature
 
 - Automatically finds the board and pieces, without cropping.
+- Recognizes 69 Chess.com 2D piece skins, including Band Class. No skin selection needed.
 - Checks your screen about once every second.
 - Blue arrow for White, orange arrow for Black.
 - Adjustable search depth from 1 to 15.
@@ -27,6 +28,14 @@ Here's what it looks like from the starting position.<br><br>
 And on a different board. At depth 12, White gets **b7 → f7** and Black gets **a8 → c8**.<br><br>
 
 <img src="docs/images/move-arrows-2.png" width="100%" alt="White rook moves from b7 to f7; Black rook moves from a8 to c8"><br><br>
+
+## Chess.com Piece Skins
+
+Using a different skin? FishEye automatically recognizes 69 Chess.com 2D piece sets, including the available bot and event skins. The templates are bundled, so there's nothing extra to download or select.
+
+Here's Band Class. At depth 12, White gets **c3 → d5** and Black gets **c7 → c6**.<br><br>
+
+<img src="docs/images/move-arrows-band-class.png" width="100%" alt="Band Class skin with a blue knight arrow from c3 to d5 and an orange pawn arrow from c7 to c6"><br><br>
 
 ## How to Use
 
@@ -55,7 +64,7 @@ dotnet run --project src/FishEyes
 
 ## Note
 
-Keep the board clear and fully visible. Some piece themes and unusual endgames may be misread. Castling and en passant aren't included in the suggestions.
+Keep the board clear and fully visible. 3D, blindfold, and checkers skins aren't supported. New skins and unusual endgames may still be misread. See [skin coverage](assets/themes/README.md). Castling and en passant aren't included in the suggestions.
 
 Your screenshots stay on your PC. Only the board position and depth go to [StockfishOnline](https://stockfish.online/docs.php), so new analysis needs internet.
 

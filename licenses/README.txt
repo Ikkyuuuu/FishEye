@@ -1,5 +1,12 @@
 FishEyes C# dependency notices
 
+Chess.com piece artwork:
+  Recognition templates are derived from public Chess.com theme sprites.
+  Artwork belongs to Chess.com and its respective creators, and is not
+  covered by the MIT/Apache notices below. Source URLs and image hashes:
+  assets/themes/manifest.json in the source repository.
+  https://www.chess.com/
+
 Recognition model and preprocessing conventions:
   Harshit Pawar / chessvision (MIT)
   https://github.com/harshitpawar64/chessvision

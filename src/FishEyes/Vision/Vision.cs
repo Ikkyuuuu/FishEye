@@ -9,7 +9,10 @@ using Rect = OpenCvSharp.Rect;
 namespace FishEyes;
 
 public record BoardDetection(Rect Bounds, double Score);
-public record Recognition(ChessPosition Position, bool WhiteBottom, float MinConfidence, float MeanConfidence);
+public record Recognition(ChessPosition Position, bool WhiteBottom, float MinConfidence, float MeanConfidence)
+{
+    public string? Theme { get; init; }
+}
 
 public sealed class BoardDetector
 {
@@ -30,7 +33,7 @@ public sealed class BoardDetector
         {
             var box = new Rect((int)Math.Round(old.X * scale), (int)Math.Round(old.Y * scale), (int)Math.Round(old.Width * scale), (int)Math.Round(old.Height * scale));
             double score = Score(pixels, small.Width, small.Height, box);
-            if (score >= .86) return new(old, score);
+            if (score >= .86) return new(Refine(screen, old), score);
             Add(box.X, box.Y, box.Width);
         }
         Add(0, 0, Math.Min(small.Width, small.Height));
@@ -78,7 +81,46 @@ public sealed class BoardDetector
         var result = new Rect((int)Math.Round(b.X / scale), (int)Math.Round(b.Y / scale), (int)Math.Round(b.Width / scale), (int)Math.Round(b.Height / scale));
         result.Width = Math.Min(result.Width, screen.Width - result.X);
         result.Height = Math.Min(result.Height, screen.Height - result.Y);
-        return new(result, best.Score);
+        return new(Refine(screen, result), best.Score);
+    }
+
+    private static Rect Refine(Mat screen, Rect box)
+    {
+        // Contour bounds include the Canny outline. Snap to the actual color
+        // transition at the seven internal grid lines, at native resolution.
+        byte[] pixels = new byte[screen.Rows * screen.Cols * 3];
+        Marshal.Copy(screen.Data, pixels, 0, pixels.Length);
+        int radius = Math.Max(3, (int)Math.Ceiling(Math.Max(screen.Width, screen.Height) / 800.0));
+        (int Start, int Length) Axis(bool vertical)
+        {
+            int originalStart = vertical ? box.X : box.Y, originalLength = vertical ? box.Width : box.Height;
+            int otherStart = vertical ? box.Y : box.X, otherLength = vertical ? box.Height : box.Width;
+            int limit = vertical ? screen.Width : screen.Height;
+            double best = double.MinValue; var result = (originalStart, originalLength);
+            for (int d = -radius; d <= radius; d++) for (int lengthDelta = -radius; lengthDelta <= radius; lengthDelta++)
+            {
+                int start = originalStart + d, length = originalLength + lengthDelta;
+                if (start < 0 || start + length > limit) continue;
+                double score = 0;
+                for (int line = 1; line < 8; line++)
+                    for (int cell = 0; cell < 8; cell++)
+                        for (int corner = 0; corner < 2; corner++)
+                        {
+                            double offset = corner == 0 ? .16 : .84;
+                            int edge = start + (int)Math.Round(line * length / 8.0);
+                            int other = otherStart + (int)((cell + offset) * otherLength / 8);
+                            int at = vertical ? (other * screen.Width + edge) * 3 : (edge * screen.Width + other) * 3;
+                            int before = at - (vertical ? 3 : screen.Width * 3);
+                            for (int c = 0; c < 3; c++) score += Math.Min(80, Math.Abs(pixels[at + c] - pixels[before + c]));
+                        }
+                // Stable tie-breaking on flat/noisy boundaries.
+                score -= (Math.Abs(d) + Math.Abs(lengthDelta)) * .01;
+                if (score > best) { best = score; result = (start, length); }
+            }
+            return result;
+        }
+        var horizontal = Axis(true); var vertical = Axis(false);
+        return new(horizontal.Start, vertical.Start, horizontal.Length, vertical.Length);
     }
 
     private static double Score(byte[] pixels, int width, int height, Rect box)
@@ -168,6 +210,7 @@ public sealed class PieceRecognizer : IDisposable
     private readonly int size;
     private readonly float[] mean, std;
     private readonly char[] classes;
+    private readonly ThemeRecognizer themes = new();
     public PieceRecognizer()
     {
         using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("FishEyes.Model.onnx")!;
@@ -182,6 +225,9 @@ public sealed class PieceRecognizer : IDisposable
     }
     public Recognition Recognize(Mat screen, Rect box, Recognition? previous = null)
     {
+        var theme = themes.Recognize(screen, box);
+        if (ThemeRecognizer.Accepted(theme))
+            return Orient(theme.Pieces, theme.Minimum, theme.Mean, previous) with { Theme = theme.Theme };
         var tensor = new DenseTensor<float>(new[] { 64, 3, size, size });
         byte[] pixels = new byte[size * size * 3];
         using var resized = new Mat();
@@ -210,6 +256,10 @@ public sealed class PieceRecognizer : IDisposable
             for (int j = 0; j < classes.Length; j++) sum += Math.Exp(logits[start + j] - logits[start + best]);
             pieces[i] = classes[best]; confidences[i] = (float)(1 / sum);
         }
+        return Orient(pieces, confidences.Min(), confidences.Average(), previous);
+    }
+    private static Recognition Orient(char[] pieces, float minimum, float average, Recognition? previous)
+    {
         double whiteRow = Enumerable.Range(0, 64).Where(i => char.IsUpper(pieces[i])).Select(i => (double)(i / 8)).DefaultIfEmpty(5).Average();
         double blackRow = Enumerable.Range(0, 64).Where(i => char.IsLower(pieces[i])).Select(i => (double)(i / 8)).DefaultIfEmpty(2).Average();
         bool whiteBottom = whiteRow >= blackRow;
@@ -220,7 +270,7 @@ public sealed class PieceRecognizer : IDisposable
             if (Math.Min(normal, flipped) <= 6) whiteBottom = normal <= flipped;
         }
         if (!whiteBottom) Array.Reverse(pieces);
-        return new(new ChessPosition(pieces), whiteBottom, confidences.Min(), confidences.Average());
+        return new(new ChessPosition(pieces), whiteBottom, minimum, average);
     }
     public void Dispose() => session.Dispose();
 }

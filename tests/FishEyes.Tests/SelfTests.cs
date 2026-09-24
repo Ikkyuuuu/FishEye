@@ -85,6 +85,20 @@ internal static class SelfTests
         using (var blank = new Mat(900, 1400, MatType.CV_8UC3, new Scalar(220, 220, 220)))
             Check(detector.Detect(blank) is null, "blank screen does not become a board");
         checks.Add("Full-screen grid detection, multiple sizes, flipped orientation, model and confidence");
+        using (var band = Cv2.ImDecode(File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Fixtures", "band-class.png")), ImreadModes.Color))
+        {
+            var board = detector.Detect(band);
+            Check(board is not null, "Band Class textured board detected without cropping");
+            var recognized = recognizer.Recognize(band, board!.Bounds);
+            Check(recognized.Theme == "Band Class" && recognized.Position.Placement == Start, "Band Class screenshot exact position");
+            Check(recognized.MinConfidence >= .60 && recognized.MeanConfidence >= .95, "Band Class accepted by capture confidence gate");
+            var again = recognizer.Recognize(band, board.Bounds, recognized);
+            Check(again.Position.Placement == Start && again.Theme == "Band Class", "cached theme and orientation");
+            var normalBoard = detector.Detect(source)!;
+            var changed = recognizer.Recognize(source, normalBoard.Bounds, recognized);
+            Check(changed.Position.Placement == Start && changed.MinConfidence >= .60 && changed.MeanConfidence >= .95, "changing skin invalidates cached theme automatically");
+        }
+        checks.Add("Band Class screenshot regression, textured grid, cached recognition and live skin changes");
         var bounds = new Rectangle(-600, 120, 640, 640);
         Check(ArrowOverlay.SquareCenter("e2", bounds, true) == new PointF(-240, 640), "negative monitor coordinates");
         Check(ArrowOverlay.SquareCenter("e7", bounds, false) == new PointF(-320, 640), "flipped arrow coordinates");

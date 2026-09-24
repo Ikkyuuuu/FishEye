@@ -30,7 +30,7 @@ internal static class ImageExample
         return new
         {
             placement = recognition.Position.Placement,
-            recognition.WhiteBottom, recognition.MinConfidence, recognition.MeanConfidence,
+            recognition.WhiteBottom, recognition.MinConfidence, recognition.MeanConfidence, recognition.Theme,
             depth, white = white.Value, black = black.Value, image = output
         };
     }

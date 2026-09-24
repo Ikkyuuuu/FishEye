@@ -12,6 +12,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/FishEyes/FishEyes.csproj" />
-    <Content Include="Fixtures/sample-board.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Fixtures/*.png" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
