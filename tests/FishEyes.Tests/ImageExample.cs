@@ -16,9 +16,9 @@ internal static class ImageExample
         var bounds = new Rectangle(board.Bounds.X, board.Bounds.Y, board.Bounds.Width, board.Bounds.Height);
         var frame = new BoardFrame(recognition, bounds, board.Score);
         if (!frame.IsReliable) throw new InvalidOperationException("Board recognition is uncertain.");
-        using var engine = new EngineService(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "FishEyes", "analysis-cache-v1.json"));
+        using var engine = new EngineService(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "FishEyes", "analysis-cache-local-v1.json"));
         const int depth = 12;
-        // Complete network work before creating WinForms controls, which install
+        // Complete engine work before creating WinForms controls, which install
         // a synchronization context that requires a message loop for async work.
         var white = engine.AnalyzeAsync(recognition.Position, true, depth).GetAwaiter().GetResult();
         var black = engine.AnalyzeAsync(recognition.Position, false, depth).GetAwaiter().GetResult();
@@ -27,7 +27,8 @@ internal static class ImageExample
             .SelectMany(child => new[] { child }.Concat(Descendants(child)));
         var controls = Descendants(panel).ToArray();
         controls.OfType<Label>().Single(c => c.Text == "Analysis paused").Text = "Moves ready";
-        controls.OfType<Label>().Single(c => c.Text == "Turn on to find your board").Text = "Updates automatically as you play";
+        controls.OfType<Label>().Single(c => c.Text == "Turn on to find your board").Text =
+            $"Local · depth reached: White {white.Value.Depth} · Black {black.Value.Depth}";
         string Summary(Analysis analysis) => analysis.Move is { } move ? $"{move[..2]} → {move.Substring(2, 2)}" : analysis.Status;
         controls.Single(c => c.AccessibleName?.StartsWith("White:") == true).Text = Summary(white.Value);
         controls.Single(c => c.AccessibleName?.StartsWith("Black:") == true).Text = Summary(black.Value);

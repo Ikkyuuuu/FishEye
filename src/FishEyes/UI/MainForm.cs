@@ -13,7 +13,7 @@ public sealed class MainForm : Form
     private readonly MoveCard whiteLabel = new() { Caption = "White", Text = "—", Accent = ArrowOverlay.WhiteColor };
     private readonly MoveCard blackLabel = new() { Caption = "Black", Text = "—", Accent = ArrowOverlay.BlackColor };
     private readonly Label detail = new() { Text = "Turn on to find your board", ForeColor = OverlayTheme.Muted, AutoSize = false };
-    private readonly Label depthLabel = new() { Text = "Search depth", TextAlign = ContentAlignment.MiddleLeft, AutoSize = false };
+    private readonly Label depthLabel = new() { Text = "Target depth", TextAlign = ContentAlignment.MiddleLeft, AutoSize = false };
     private readonly ToolTip tips = new() { AutoPopDelay = 15000, InitialDelay = 450, ReshowDelay = 150 };
     private readonly BoardDisclosure disclosure = new() { TabIndex = 3 };
     private readonly BoardPreview boardPreview = new();
@@ -48,7 +48,7 @@ public sealed class MainForm : Form
     {
         this.windowMode = windowMode;
         if (!windowMode) alwaysOnTop = new AlwaysOnTop(this, arrows);
-        engine = service ?? new EngineService(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "FishEyes", "analysis-cache-v1.json"));
+        engine = service ?? new EngineService(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "FishEyes", "analysis-cache-local-v1.json"));
         Text = "FishEyes · live chess";
         Icon = Branding.AppIcon;
         // All geometry is laid out from DeviceDpi in LayoutPanel. Mixing native
@@ -71,7 +71,7 @@ public sealed class MainForm : Form
         Controls.AddRange([toggle, depthLabel, depth, status, whiteLabel, blackLabel, detail, close, disclosure, previewClip]);
         LayoutPanel();
         tips.SetToolTip(toggle, "Start or pause automatic analysis");
-        tips.SetToolTip(depth, "Depth 6–15. Higher values search further and may take longer.");
+        tips.SetToolTip(depth, "Target depth 1–40. Local Stockfish searches up to 500 ms per side; actual depth may be lower.");
         tips.SetToolTip(close, "Close FishEyes (Alt+F4)");
         tips.SetToolTip(whiteLabel, "Blue arrow · assumes White is to move");
         tips.SetToolTip(blackLabel, "Orange arrow · assumes Black is to move");
@@ -224,10 +224,10 @@ public sealed class MainForm : Form
             // finishes. Starting another would overlap screen recognition.
             if (captureLoop is null || captureLoop.IsCompleted) captureLoop = CaptureLoopAsync();
         }
-        else engine.CancelPending();
     }
     private void ResetView(bool clearPreview = true)
     {
+        engine.CancelPending();
         generation++; stableFrames = 0;
         lastPosition = currentKey = analyzingKey = null;
         currentFrame = null; whiteResult = blackResult = null;
@@ -281,6 +281,7 @@ public sealed class MainForm : Form
             string key = $"{position}|{depth.Value}";
             if (currentKey != key)
             {
+                engine.CancelPending();
                 currentKey = key; generation++;
                 analyzingKey = null; whiteResult = blackResult = null;
                 arrows.Clear();
@@ -293,8 +294,7 @@ public sealed class MainForm : Form
                 return;
             }
             status.Text = whiteResult is not null && blackResult is not null ? "Moves ready" : "Analyzing…";
-            detail.Text = engine.CacheWarning is null ? "Updates automatically as you play" : "Cache needs attention · hover for details";
-            tips.SetToolTip(detail, engine.CacheWarning ?? "Each arrow assumes that color is to move.");
+            UpdateEngineDetail();
             ShowCurrentArrows();
             if (analyzingKey != key && (whiteResult is null || blackResult is null))
             {
@@ -334,6 +334,7 @@ public sealed class MainForm : Form
                     summary = $"{result.Value.Move[..2]} → {result.Value.Move.Substring(2, 2)}" + (result.Value.Move.Length == 5 ? $" ={char.ToUpperInvariant(result.Value.Move[4])}" : "");
                 label.Text = summary == "Turn not legal" ? "Not this turn" : summary;
                 if (whiteResult is not null && blackResult is not null) status.Text = "Moves ready";
+                UpdateEngineDetail();
                 ShowCurrentArrows();
             }
             catch (OperationCanceledException) when (closing) { }
@@ -344,6 +345,15 @@ public sealed class MainForm : Form
         }
         await Task.WhenAll(AnalyzeSide(true), AnalyzeSide(false));
         if (StillCurrent()) analyzingKey = null;
+    }
+    private void UpdateEngineDetail()
+    {
+        string reached = $"White {whiteResult?.Depth?.ToString() ?? "—"} · Black {blackResult?.Depth?.ToString() ?? "—"}";
+        detail.Text = engine.CacheWarning is not null ? "Cache needs attention · hover for details"
+            : whiteResult?.Depth is not null || blackResult?.Depth is not null
+                ? $"Local · depth reached: {reached}" : "Local Stockfish · up to 500 ms per side";
+        tips.SetToolTip(detail, engine.CacheWarning ?? "Runs offline. Each arrow assumes that color is to move. " +
+            $"Depth reached: {reached}. Target depth is capped by the 500 ms search budget.");
     }
     private void ShowCurrentArrows()
     {

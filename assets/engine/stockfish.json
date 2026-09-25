@@ -1,0 +1,7 @@
+{
+  "version": "19",
+  "url": "https://github.com/official-stockfish/Stockfish/releases/download/sf_19/stockfish-windows-x86-64-universal.zip",
+  "sha256": "3c8bf1f9ea66a09350a40df4f632288285ac206d99f33ab5842c408fc30b48a7",
+  "executable": "stockfish/stockfish-windows-x86-64-universal.exe",
+  "executableSha256": "45bc8e4969147db9c2eb533810637994619bff0eacc81ccfd9854394901bcbd0"
+}

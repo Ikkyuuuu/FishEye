@@ -1,30 +1,35 @@
-FishEyes - C# automatic chess overlay
+FishEyes - offline chess overlay
 
 1. Open FishEyes.exe.
 2. Show a complete 2D chessboard on your screen.
-3. Set Search depth (6-15) and switch analysis On.
+3. Set target Search depth (1-40) and switch analysis On.
    Use - / +, or type a value and press Enter.
 
-Blue arrow: White's best move, assuming White is to move.
-Orange arrow: Black's best move, assuming Black is to move.
-Both arrows analyze the current position independently.
+Stockfish 19 is included. First analysis unpacks the engine, source and license
+under %LOCALAPPDATA%\FishEyes\engines. No internet or separate install needed.
+Each side gets up to 500 ms of analysis, using up to two CPU threads and a
+128 MB hash table (plus engine memory). The panel shows the actual depth reached.
 
-Capture runs about once per second. Wait for two matching captures and the
-engine response. Unchanged positions use a saved cache without more API calls.
+Blue arrow: assumes White is to move. Orange arrow: assumes Black is to move.
+Both arrows analyze the current position independently. Castling and en passant
+are unavailable because a screenshot does not establish those rights.
 
-Switch Off to pause capture, cancel pending analysis and clear the arrows.
-Drag the FishEyes header to move the panel; use X or Alt+F4 to exit.
+Capture repeats as soon as each scan finishes. Two matching scans are needed.
+Unchanged positions use a saved cache. A changed board cancels outdated analysis.
+Switch Off to pause, cancel analysis and clear the arrows. Click Detected board
+to inspect recognized pieces. Drag the header to move; use X or Alt+F4 to exit.
 Tab moves between controls; Space activates a focused button.
 
-No board crop or turn input is required. Arrows allow clicks through them.
-Only FEN positions and depth go to stockfish.online; screen images stay local.
-Internet is needed for new analysis. Python and a separate .NET installation
-are not required. Keep the licenses folder when sharing the application.
+For screenshots, close FishEyes then open FishEyes-Window.cmd beside the EXE.
+This temporary window mode can be captured and shows arrows only in its preview.
+
+Screen images and board positions stay on your PC. Python and a separate .NET
+installation are not required. Keep the licenses folder when sharing the app.
+Stockfish's license and source are also included inside the executable.
 
 Limits: a full, visible, axis-aligned board is required. Orientation is inferred
-from the piece arrangement. Unfamiliar themes or unusual endgames may not be
-recognized correctly. Castling and en passant rights are assumed unavailable.
+from the pieces. Unfamiliar themes or unusual endgames may be misread.
 
-Cache: %LOCALAPPDATA%\FishEyes\analysis-cache-v1.json
-Windows x64 build. On a fresh PC, native dependencies may need Microsoft's
-Visual C++ 2015-2022 x64 redistributable.
+Cache: %LOCALAPPDATA%\FishEyes\analysis-cache-local-v1.json
+Windows x64. Native dependencies may need Microsoft's Visual C++ 2015-2022 x64
+redistributable on a fresh PC.

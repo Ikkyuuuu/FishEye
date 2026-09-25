@@ -10,6 +10,9 @@
 # Local builds, packages, and test reports
 /artifacts/
 /dist/
+/assets/engine/stockfish.zip
+# The offline executable exceeds GitHub's per-file Git limit. Publish in Releases.
+/FishEyes.exe
 TestResults/
 *.log
 

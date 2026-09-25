@@ -7,7 +7,10 @@ internal static class TestProgram
     [STAThread]
     private static int Main(string[] args)
     {
-        ApplicationConfiguration.Initialize();
+        if (args.Length >= 3 && args[0] == "--uci-fixture") return EngineTests.RunFixture(args);
+        Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
         string? Value(string name)
         {
             int index = Array.IndexOf(args, name);
@@ -30,7 +33,7 @@ internal static class TestProgram
                 ? ThemeTests.Run(sample, Path.GetDirectoryName(output)!)
                 : args.Contains("--analyze-image")
                 ? ImageExample.AnalyzeAsync(sample, Path.GetDirectoryName(output)!).GetAwaiter().GetResult()
-                : SelfTests.RunAsync(sample, args.Contains("--live-api"), Path.GetDirectoryName(output)!).GetAwaiter().GetResult();
+                : SelfTests.RunAsync(sample, args.Contains("--local-engine"), Path.GetDirectoryName(output)!).GetAwaiter().GetResult();
             string json = JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(output, json);
             Console.WriteLine(json);

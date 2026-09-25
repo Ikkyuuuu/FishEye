@@ -1,7 +1,4 @@
 using System.Diagnostics;
-using System.Net;
-using System.Net.Http;
-using System.Text;
 using System.Text.Json;
 using System.Runtime.InteropServices;
 using OpenCvSharp;
@@ -29,18 +26,19 @@ internal static class SelfTests
     private static void Check(bool condition, string description)
     { if (!condition) throw new InvalidOperationException("Test failed: " + description); }
 
-    internal sealed class FakeEngine(bool fail = false, string? forcedMove = null) : HttpMessageHandler
+    internal sealed class FakeEngine(bool fail = false, string? forcedMove = null, string identity = "test-engine-v1") : IAnalysisEngine
     {
         public int Calls;
-        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        public string CacheIdentity => identity;
+        public async Task<Analysis> AnalyzeAsync(string fen, int depth, CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref Calls);
             await Task.Delay(180, cancellationToken);
-            if (fail) return new(HttpStatusCode.ServiceUnavailable);
-            string decoded = Uri.UnescapeDataString(request.RequestUri!.Query);
-            string move = forcedMove ?? (decoded.Contains(" w ") ? "e2e4" : "e7e5");
-            return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { success = true, bestmove = "bestmove " + move, evaluation = .25, mate = (int?)null }), Encoding.UTF8, "application/json") };
+            if (fail) throw new IOException("Engine unavailable");
+            string move = forcedMove ?? (fen.Contains(" w ") ? "e2e4" : "e7e5");
+            return new(move, "Ready", .25, null, depth);
         }
+        public void Dispose() { }
     }
 
     public static async Task<object> RunAsync(string samplePath, bool live, string outputDirectory)
@@ -139,18 +137,19 @@ internal static class SelfTests
         var depthFake = new FakeEngine();
         using (var engine = new EngineService(null, depthFake))
         {
-            foreach (int invalidDepth in new[] { 1, 5, 16 })
+            foreach (int invalidDepth in new[] { 0, 41 })
             {
                 bool rejected = false;
                 try { await engine.AnalyzeAsync(position, true, invalidDepth); }
                 catch (ArgumentOutOfRangeException) { rejected = true; }
                 Check(rejected, $"unsupported depth {invalidDepth} rejected locally");
             }
-            Check(depthFake.Calls == 0, "invalid depths do not call the API");
-            await engine.AnalyzeAsync(position, true, 6);
-            Check(depthFake.Calls == 1, "minimum API depth 6 accepted");
+            Check(depthFake.Calls == 0, "invalid depths do not start analysis");
+            await engine.AnalyzeAsync(position, true, 1);
+            await engine.AnalyzeAsync(position, true, 40);
+            Check(depthFake.Calls == 2, "local depth limits 1 and 40 accepted");
         }
-        checks.Add("API depth range 6–15, invalid depths rejected before sending");
+        checks.Add("Local target depth range 1–40, invalid depths rejected before analysis");
         var bounds = new Rectangle(-600, 120, 640, 640);
         Check(ArrowOverlay.SquareCenter("e2", bounds, true) == new PointF(-240, 640), "negative monitor coordinates");
         Check(ArrowOverlay.SquareCenter("e7", bounds, false) == new PointF(-320, 640), "flipped arrow coordinates");
@@ -168,7 +167,7 @@ internal static class SelfTests
             Check(fake.Calls == 3, "depth is part of cache key");
             await engine.AnalyzeAsync(mate, false, 10);
             await engine.AnalyzeAsync(check, true, 10);
-            Check(fake.Calls == 3, "terminal and illegal assumptions need no HTTP call");
+            Check(fake.Calls == 3, "terminal and illegal assumptions need no engine search");
         }
         var afterRestart = new FakeEngine();
         using (var engine = new EngineService(cache, afterRestart))
@@ -183,8 +182,8 @@ internal static class SelfTests
         {
             for (int i = 0; i < 3; i++)
             {
-                try { await engine.AnalyzeAsync(position, true, 10); throw new Exception("Expected API failure"); }
-                catch (Exception e) when (e is HttpRequestException or InvalidOperationException) { }
+                try { await engine.AnalyzeAsync(position, true, 10); throw new Exception("Expected engine failure"); }
+                catch (Exception e) when (e is IOException or InvalidOperationException) { }
             }
             Check(failed.Calls == 1, "failed request backs off instead of retrying each second");
         }
@@ -192,7 +191,7 @@ internal static class SelfTests
         {
             bool rejected = false;
             try { await engine.AnalyzeAsync(position, true, 10); } catch (InvalidOperationException) { rejected = true; }
-            Check(rejected, "illegal API move rejected");
+            Check(rejected, "illegal engine move rejected");
         }
         var cancellable = new FakeEngine();
         using (var engine = new EngineService(null, cancellable))
@@ -202,11 +201,14 @@ internal static class SelfTests
             await Task.Delay(40);
             engine.CancelPending();
             try { await Task.WhenAll(first, second); } catch (OperationCanceledException) { }
-            Check(cancellable.Calls <= 1, "Off cancels the active and queued API calls");
+            Check(cancellable.Calls <= 1, "Off cancels the active and queued engine calls");
             Check((await engine.AnalyzeAsync(position, true, 10)).Value.Move == "e2e4", "resume after cancellation");
         }
-        checks.Add("Cache per side/depth, concurrent deduplication, disk persistence, backoff and API validation");
+        checks.Add("Cache per side/depth, concurrent deduplication, disk persistence, backoff and engine validation");
         object? liveResult = null;
+        await EngineTests.RunProtocolAsync(outputDirectory);
+        checks.Add("UCI child process: options, score perspective, mate, reuse, timeout, crash, cancellation and disposal");
+        object? localEngine = live ? await EngineTests.RunRealAsync() : null;
         if (live)
         {
             using var engine = new EngineService(null);
@@ -214,15 +216,15 @@ internal static class SelfTests
             var black = await engine.AnalyzeAsync(position, false, 10);
             await engine.AnalyzeAsync(position, true, 10);
             await engine.AnalyzeAsync(position, false, 10);
-            Check(engine.RequestCount == 2, "real API cache");
+            Check(engine.RequestCount == 2, "real engine cache");
             string outputImage = Path.Combine(outputDirectory, "move-arrows.png");
             using var annotated = new Bitmap(samplePath);
             using (var graphics = Graphics.FromImage(annotated)) ArrowOverlay.DrawMoves(graphics, new Rectangle(0, 0, annotated.Width, annotated.Height), true, white.Value, black.Value);
             annotated.Save(outputImage, System.Drawing.Imaging.ImageFormat.Png);
             liveResult = new { white = white.Value, black = black.Value, engine.RequestCount, image = outputImage };
-            checks.Add("Real Stockfish API, both sides, repeated requests served from cache, arrow image");
+            checks.Add("Real Stockfish engine, both sides, repeated requests served from cache, arrow image");
         }
-        return new { passed = true, checks, detections, liveResult, seconds = watch.Elapsed.TotalSeconds };
+        return new { passed = true, checks, detections, liveResult, localEngine, seconds = watch.Elapsed.TotalSeconds };
     }
 
     public static int RunGui(string samplePath, string output, bool windowMode = false)
@@ -316,9 +318,9 @@ internal static class SelfTests
                 increase.PerformClick(); Check(depthInput.Text == "13", "depth increment button");
                 decrease.PerformClick(); Check(depthInput.Text == "12", "depth decrement button");
                 depthInput.Focus(); depthInput.Text = "99"; power.Focus();
-                Check(depthInput.Text == "15", "typed depth is clamped to 15");
+                Check(depthInput.Text == "40", "typed depth is clamped to 40");
                 depthInput.Focus(); depthInput.Text = "1"; power.Focus();
-                Check(depthInput.Text == "6" && !decrease.Enabled, "typed depth is clamped to API minimum 6");
+                Check(depthInput.Text == "1" && !decrease.Enabled, "typed depth is clamped to local minimum 1");
                 depthInput.Focus(); depthInput.Text = "12"; power.Focus();
                 using (var preview = new Bitmap(panel.Width, panel.Height))
                 {
@@ -365,7 +367,7 @@ internal static class SelfTests
                     timer.Stop();
                     await VerifyTopmost(demote: false);
                     Check(panel.CurrentFrame?.Recognition.Position.Placement == Start, "live screen recognition");
-                    Check(fake.Calls == 2, "live captures do not repeat API calls");
+                    Check(fake.Calls == 2, "live captures do not repeat engine calls");
                     Check(panel.ArrowsClickThrough, "native click-through arrows");
                     Check(panel.ExcludesOwnWindows == !windowMode, "capture exclusion follows window mode");
                     if (windowMode)

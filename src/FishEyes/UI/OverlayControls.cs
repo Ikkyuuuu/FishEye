@@ -146,7 +146,7 @@ internal sealed class DepthStepper : UserControl
     {
         BorderStyle = BorderStyle.None, TextAlign = HorizontalAlignment.Center, MaxLength = 2,
         BackColor = OverlayTheme.Surface, ForeColor = OverlayTheme.Text,
-        Font = new Font("Segoe UI", 10, FontStyle.Bold), AccessibleName = "Search depth, 6 to 15", TabIndex = 0
+        Font = new Font("Segoe UI", 10, FontStyle.Bold), AccessibleName = "Search depth, 1 to 40", TabIndex = 0
     };
     private int value = 12;
     public event EventHandler? ValueChanged;

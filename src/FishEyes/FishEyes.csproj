@@ -22,8 +22,13 @@
     <EmbeddedResource Include="../../assets/pieces/neo/*.png" LogicalName="FishEyes.Pieces.%(Filename)%(Extension)" />
     <EmbeddedResource Include="../../assets/branding/logo.png" LogicalName="FishEyes.Logo.png" />
     <EmbeddedResource Include="../../assets/branding/FishEyes.ico" LogicalName="FishEyes.App.ico" />
+    <EmbeddedResource Include="../../assets/engine/stockfish.zip" LogicalName="FishEyes.Stockfish.zip" />
+    <EmbeddedResource Include="../../assets/engine/stockfish.json" LogicalName="FishEyes.Stockfish.json" />
     <Content Include="../../licenses/**/*" Link="licenses/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
     <Content Include="../../docs/START-HERE.txt" Link="START-HERE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
     <Content Include="../../FishEyes-Window.cmd" Link="FishEyes-Window.cmd" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
   </ItemGroup>
+  <Target Name="PrepareStockfish" BeforeTargets="PrepareForBuild">
+    <Exec Command="pwsh -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)/../../scripts/prepare-stockfish.ps1&quot;" />
+  </Target>
 </Project>

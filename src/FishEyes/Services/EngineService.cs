@@ -1,34 +1,31 @@
-using System.Net.Http;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 
 namespace FishEyes;
 
-public record Analysis(string? Move, string Status, double? Evaluation = null, int? Mate = null);
+public record Analysis(string? Move, string Status, double? Evaluation = null, int? Mate = null, int? Depth = null);
 public record CachedAnalysis(Analysis Value, bool FromCache);
 
 public sealed class EngineService : IDisposable
 {
-    public const string Endpoint = "https://stockfish.online/api/s/v2.php";
-    public const int MinimumDepth = 6;
-    public const int MaximumDepth = 15;
-    private readonly HttpClient http;
+    public const int MinimumDepth = 1;
+    public const int MaximumDepth = 40;
+    private readonly IAnalysisEngine backend;
     private readonly string? cachePath;
     private readonly object gate = new();
     private readonly Dictionary<string, Analysis> completed;
-    private readonly Dictionary<string, Task<Analysis>> pending = new();
+    private readonly Dictionary<string, (Task<Analysis> Task, int Generation)> pending = new();
     private readonly Dictionary<string, (DateTime Until, int Attempts, string Message)> failures = new();
     private readonly SemaphoreSlim requestGate = new(1);
     private readonly CancellationTokenSource shutdown = new();
     private CancellationTokenSource activeRequests = new();
+    private int generation;
+    private bool disposed;
     public int RequestCount { get; private set; }
     public string? CacheWarning { get; private set; }
-    public EngineService(string? cachePath, HttpMessageHandler? handler = null)
+    public EngineService(string? cachePath, IAnalysisEngine? backend = null)
     {
         this.cachePath = cachePath;
-        http = handler is null ? new HttpClient() : new HttpClient(handler);
-        http.Timeout = TimeSpan.FromSeconds(35);
-        http.DefaultRequestHeaders.UserAgent.ParseAdd("FishEyes/2.0");
+        this.backend = backend ?? new LocalStockfishEngine();
         completed = new();
         if (cachePath is not null && File.Exists(cachePath))
         {
@@ -43,32 +40,34 @@ public sealed class EngineService : IDisposable
         string? invalid = position.InvalidReason(white);
         if (invalid is not null) return new(new(null, "Turn not legal"), true);
         if (!position.HasLegalMove(white)) return new(new(null, "No legal move"), true);
-        string fen = position.Fen(white), key = $"v1|{depth}|{fen}";
+        string fen = position.Fen(white), key = $"{backend.CacheIdentity}|{depth}|{fen}";
         Task<Analysis> task;
         lock (gate)
         {
+            ObjectDisposedException.ThrowIf(disposed, this);
             if (completed.TryGetValue(key, out var cached))
             {
                 if (cached?.Move is not null && position.IsLegal(cached.Move, white)) return new(cached, true);
                 completed.Remove(key); // Never trust a damaged or manually edited cache.
             }
-            if (pending.TryGetValue(key, out var running)) task = running;
+            if (pending.TryGetValue(key, out var running)) task = running.Task;
             else
             {
                 if (failures.TryGetValue(key, out var failure) && failure.Until > DateTime.UtcNow)
                     throw new InvalidOperationException($"Retry in {Math.Ceiling((failure.Until - DateTime.UtcNow).TotalSeconds)}s: {failure.Message}");
                 var requestCancellation = CancellationTokenSource.CreateLinkedTokenSource(shutdown.Token, activeRequests.Token);
+                int requestGeneration = generation;
                 task = Task.Run(async () =>
                 {
                     using (requestCancellation)
-                        return await FetchAsync(position, white, depth, key, requestCancellation.Token);
+                        return await FetchAsync(position, white, depth, key, requestGeneration, requestCancellation.Token);
                 });
-                pending.Add(key, task);
+                pending.Add(key, (task, requestGeneration));
             }
         }
         return new(await task.WaitAsync(cancellation), false);
     }
-    private async Task<Analysis> FetchAsync(ChessPosition position, bool white, int depth, string key, CancellationToken cancellation)
+    private async Task<Analysis> FetchAsync(ChessPosition position, bool white, int depth, string key, int requestGeneration, CancellationToken cancellation)
     {
         try
         {
@@ -77,19 +76,10 @@ public sealed class EngineService : IDisposable
             try
             {
                 RequestCount++;
-                string url = $"{Endpoint}?fen={Uri.EscapeDataString(position.Fen(white))}&depth={depth}";
-                using var response = await http.GetAsync(url, cancellation);
-                response.EnsureSuccessStatusCode();
-                using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellation));
-                var data = document.RootElement;
-                if (!data.TryGetProperty("success", out var success) || success.ValueKind != JsonValueKind.True)
-                    throw new InvalidOperationException("The engine rejected the position.");
-                string best = data.TryGetProperty("bestmove", out var bestMove) ? bestMove.GetString() ?? "" : "";
-                string move = Regex.Match(best, @"\b[a-h][1-8][a-h][1-8][qrbn]?\b").Value;
-                if (!position.IsLegal(move, white)) throw new InvalidOperationException("The engine returned an invalid move.");
-                double? evaluation = data.TryGetProperty("evaluation", out var ev) && ev.ValueKind == JsonValueKind.Number && ev.TryGetDouble(out double n) ? n : null;
-                int? mate = data.TryGetProperty("mate", out var mt) && mt.ValueKind == JsonValueKind.Number && mt.TryGetInt32(out int m) ? m : null;
-                value = new(move, "Ready", evaluation, mate);
+                value = await backend.AnalyzeAsync(position.Fen(white), depth, cancellation).ConfigureAwait(false);
+                cancellation.ThrowIfCancellationRequested();
+                if (value.Move is null || !position.IsLegal(value.Move, white))
+                    throw new InvalidOperationException("The engine returned an invalid move.");
             }
             finally { requestGate.Release(); }
             lock (gate)
@@ -110,7 +100,11 @@ public sealed class EngineService : IDisposable
             }
             throw;
         }
-        finally { lock (gate) pending.Remove(key); }
+        finally
+        {
+            lock (gate)
+                if (pending.TryGetValue(key, out var item) && item.Generation == requestGeneration) pending.Remove(key);
+        }
     }
     private void SaveCache()
     {
@@ -129,8 +123,18 @@ public sealed class EngineService : IDisposable
     public void CancelPending()
     {
         CancellationTokenSource old;
-        lock (gate) { old = activeRequests; activeRequests = new(); }
+        lock (gate)
+        {
+            if (disposed) return;
+            old = activeRequests; activeRequests = new();
+            generation++; pending.Clear();
+        }
         old.Cancel(); old.Dispose();
     }
-    public void Dispose() { shutdown.Cancel(); http.Dispose(); }
+    public void Dispose()
+    {
+        lock (gate) { if (disposed) return; disposed = true; }
+        shutdown.Cancel(); backend.Dispose();
+        activeRequests.Dispose(); shutdown.Dispose();
+    }
 }

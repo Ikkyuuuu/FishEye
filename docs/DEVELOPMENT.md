@@ -16,6 +16,8 @@ dotnet run --project src/FishEyes
 
 Open `FishEyes.slnx` in an IDE that supports .NET 10, or use `dotnet build FishEyes.slnx`.
 
+To verify the published executable's embedded engine without opening the overlay, run `FishEyes.exe --engine-check <report.json>`. This hashes the embedded archive, analyzes both sides of the starting position locally, verifies cache reuse, writes a JSON report and exits (nonzero on failure).
+
 ## Temporary window mode
 
 For README screenshots, close the existing instance and double-click `FishEyes-Window.cmd` beside the executable. It runs `./FishEyes.exe --window` (from source: `dotnet run --project src/FishEyes -- --window`). This opens a normal, capturable window with a title bar. It is not always on top, and suggested moves appear only in its board preview. The scanner masks this window inside its own recognition image so the preview cannot become a second input board; screenshot tools still see it normally. Keep the actual board uncovered while analysis is running.
@@ -30,8 +32,8 @@ Tests live in a separate executable project and are not bundled in the applicati
 # Deterministic tests; no engine network calls
 .\scripts\test.ps1
 
-# Optional integration test against the real Stockfish API
-.\scripts\test.ps1 -LiveApi
+# Integration test against bundled local Stockfish (no analysis network calls)
+.\scripts\test.ps1 -LocalEngine
 
 # Optional interactive desktop test; temporarily opens a sample board
 .\scripts\test.ps1 -Gui
@@ -43,7 +45,7 @@ The GUI test also opens and closes the detected-board preview, reverses its anim
 
 The preview uses embedded Chess.com Neo PNGs from `assets/pieces/neo/` and reuses the screen overlay's arrow renderer and analysis results. Position changes, uncertainty, pause, and depth changes clear its arrows; late results for another position are ignored. The GUI suite checks these cases and flipped orientation.
 
-GitHub Actions runs the deterministic tests and publishes a downloadable Windows build on pushes and pull requests. Interactive GUI tests and live API calls are opt-in local checks.
+GitHub Actions runs the deterministic tests and publishes a downloadable Windows build on pushes and pull requests. Interactive GUI tests and real-engine checks are opt-in local checks. The first build downloads the pinned Stockfish distribution and verifies its SHA-256; subsequent builds reuse it. The finished executable is fully offline.
 
 ### Analyze an image
 
@@ -85,13 +87,14 @@ tests/FishEyes.Tests/
   Fixtures/         Sample board used by tests
 assets/models/      Bundled ONNX model
 assets/themes/      Bundled Chess.com templates and source manifest
+assets/engine/      Stockfish download manifest (archive fetched during build)
 scripts/            Build and test entry points
 docs/               User guide and screenshots
 licenses/           Third-party notices
 .github/workflows/  Windows CI build
 ```
 
-Generated build output, IDE files, and test reports are ignored by Git. The root `FishEyes.exe` is a checked-in standalone build; also publish release executables through GitHub Releases or Actions artifacts.
+Generated build output, IDE files, and test reports are ignored by Git. Publishing also copies `FishEyes.exe` to the root for convenience. The offline executable exceeds GitHub's 100 MiB Git file limit, so it is ignored and distributed through GitHub Releases or Actions artifacts.
 
 ## Piece themes
 
@@ -107,11 +110,17 @@ Squares with more than 45% of the matching region masked are rejected, alongside
 
 The bundled pack covers 69 distinguishable 2D sets. See [theme coverage and refresh instructions](../assets/themes/README.md) for sources, exclusions, and the full synthetic test suite. Ordinary startup and recognition do not download images or contact Chess.com.
 
-## Capture, API, and cache
+## Capture, local engine, and cache
 
-Screen images are processed in memory and are not saved during normal use. Only the recognized FEN and requested depth are sent to [StockfishOnline](https://stockfish.online/docs.php). An internet connection is needed for uncached analysis.
+Screen images are processed in memory and are not saved during normal use. No screenshots or positions leave the PC. `EngineService` sends FEN positions through redirected stdin to one hidden Stockfish 19 process using UCI, then reads `info` and `bestmove` from stdout. The process is reused, has below-normal priority, uses 1–2 threads, a 128 MiB hash table and MultiPV 1. Total engine memory is higher than the hash allocation.
 
-The cache is stored at `%LOCALAPPDATA%\FishEyes\analysis-cache-v1.json`. Completed results survive restarts. Unchanged boards and previously analyzed positions reuse those results at the same depth. Concurrent requests share work; transient failures back off from 15 seconds to 5 minutes.
+The selected depth is a target from 1 to 40. Searches use `go depth <target> movetime 500`, stopping on either limit. Each side is searched independently and sequentially, so both can take roughly one second plus startup/communication overhead. The UI reports completed PV depth. Evaluations and mate signs are converted from the UCI side-to-move perspective to White's perspective. Returned moves still pass application legality checks.
+
+The full official distribution (engine, source, license, authors and build docs) is embedded. First analysis verifies and extracts it under `%LOCALAPPDATA%\FishEyes\engines`; later process launches verify the executable. A file lock serializes installation across instances, and interrupted extraction is retried. Download URL and hashes are pinned in `assets/engine/stockfish.json`. Distribution notices and exact source access are included; see `assets/engine/README.md`.
+
+The cache is stored at `%LOCALAPPDATA%\FishEyes\analysis-cache-local-v1.json`. It does not reuse old API results. Keys include engine version/protocol revision, threads, hash, time budget, target depth and the full FEN (including side to move). Completed results survive restarts; concurrent requests share work. Transient failures back off from 15 seconds to 5 minutes.
+
+Board changes, uncertainty, depth changes and Off cancel pending analysis. Cancellation kills the process to discard stale output; the next request starts a clean process. A 15-second watchdog covers extraction, startup and protocol response. Exited engines restart automatically. Closing FishEyes kills its engine process. Tests use a real UCI child-process fixture for pipe handling, score signs, mate, timeout, crash, cancellation and process disposal; `-LocalEngine` verifies the official binary, process reuse and recovery.
 
 Screens continue updating while the engine is working. Stale results cannot replace the current arrows. FishEyes excludes its own windows from capture, with a brief hide-and-capture fallback when Windows cannot exclude them.
 
@@ -129,6 +138,6 @@ Both overlay windows reassert their topmost position on foreground-window change
 
 ## Dependencies and licensing
 
-FishEyes uses .NET / Windows Forms, ONNX Runtime, OpenCvSharp / OpenCV, and the [chessvision recognition model](https://huggingface.co/harshitpawar64/chessvision) by Harshit Pawar. See [third-party notices](../licenses/README.txt) and [model information](../assets/models/README.md). Stockfish itself is not bundled; analysis uses the external HTTP service.
+FishEyes uses .NET / Windows Forms, ONNX Runtime, OpenCvSharp / OpenCV, and the [chessvision recognition model](https://huggingface.co/harshitpawar64/chessvision) by Harshit Pawar. See [third-party notices](../licenses/README.txt) and [model information](../assets/models/README.md). Stockfish 19 is bundled as an unmodified separate UCI executable under GPLv3, with the exact upstream source distribution and license.
 
 No license has been selected for the original FishEyes application code. The files under `licenses/` describe third-party components and do not license the application as a whole.
