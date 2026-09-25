@@ -6,15 +6,15 @@ Have you ever looked at a chessboard and wondered what the best next move is?
 
 FishEye watches your screen, detects the pieces, and asks Stockfish to figure it out. It draws the moves on your screen and in a little board preview. Just keep the board visible and turn it on.<br><br>
 
-<img src="docs/images/overlay.png" width="100%" alt="FishEyes overlay with Chess.com Neo pieces and blue and orange arrows in the board preview"><br><br>
+<img src="docs/images/overlay.png" width="100%" alt="Chessboard with move arrows and the FishEyes panel on the right, including its detected-board preview"><br><br>
 
 ## Key Feature
 
 - Automatically finds the board and pieces, without cropping.
 - Recognizes 69 Chess.com 2D piece skins, including Band Class. No skin selection needed.
-- Checks your screen about once every second.
+- Checks again as soon as each scan finishes, with no fixed polling delay.
 - Blue arrow for White, orange arrow for Black—on your screen and in the preview.
-- Adjustable search depth from 1 to 15.
+- Adjustable search depth from 6 to 15.
 - Board preview with Chess.com's Neo pieces and a quick 150 ms dropdown animation.
 - Stays above other windows without taking keyboard focus, even while paused.
 - Remembers analyzed positions, so it doesn't keep asking the API the same thing at the same depth.
@@ -44,6 +44,8 @@ And on a different board. At depth 12, White gets **b7 → f7** and Black gets *
 Using a different skin? FishEye automatically recognizes 69 Chess.com 2D piece sets, including the available bot and event skins. The templates are bundled, so there's nothing extra to download or select.
 
 Recognition is also improved for the Bases skin at different board sizes, including highlighted squares and move-review badges.
+
+Drawing planning arrows? FishEye can ignore colored strokes that cross squares while reading the visible pieces. If arrows cover too much, the preview stays marked uncertain until you clear them.
 
 Here's Band Class. At depth 12, White gets **c3 → d5** and Black gets **c7 → c6**.<br><br>
 

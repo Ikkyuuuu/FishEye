@@ -19,7 +19,10 @@ internal static class TestProgram
         try
         {
             if (args.Contains("--gui-test")) return SelfTests.RunGui(sample, output);
-            var report = args.Contains("--build-themes")
+            if (args.Contains("--window-test")) return SelfTests.RunGui(sample, output, windowMode: true);
+            var report = args.Contains("--readme-image")
+                ? ImageExample.RenderReadme(sample, Path.GetDirectoryName(output)!)
+                : args.Contains("--build-themes")
                 ? ThemePack.Build(sample, Path.GetDirectoryName(output)!)
                 : args.Contains("--inspect-image")
                 ? ImageExample.Inspect(sample)

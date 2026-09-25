@@ -16,6 +16,12 @@ dotnet run --project src/FishEyes
 
 Open `FishEyes.slnx` in an IDE that supports .NET 10, or use `dotnet build FishEyes.slnx`.
 
+## Temporary window mode
+
+For README screenshots, close the existing instance and double-click `FishEyes-Window.cmd` beside the executable. It runs `./FishEyes.exe --window` (from source: `dotnet run --project src/FishEyes -- --window`). This opens a normal, capturable window with a title bar. It is not always on top, and suggested moves appear only in its board preview. The scanner masks this window inside its own recognition image so the preview cannot become a second input board; screenshot tools still see it normally. Keep the actual board uncovered while analysis is running.
+
+This option is not saved. Launch without `--window` to return to the normal overlay.
+
 ## Tests
 
 Tests live in a separate executable project and are not bundled in the application. The runner exits with a nonzero status on failure; use the scripts below rather than `dotnet test`.
@@ -55,7 +61,15 @@ To diagnose a detection or recognition failure without calling the engine:
 dotnet run --project tests/FishEyes.Tests -c Release -- --inspect-image --sample "path/to/board.png" --output artifacts/inspection/report.json
 ```
 
-The report includes grid bounds, matched theme, each square's match error and runner-up margin, and the final recognized position.
+The report includes grid bounds, matched theme, each square's match error, runner-up margin and annotation coverage, and the final recognized position.
+
+To make a README image with a board on the left and the actual FishEyes controls on the right:
+
+```powershell
+dotnet run --project tests/FishEyes.Tests -c Release -- --readme-image --sample "path/to/board.png" --output artifacts/readme-capture/report.json
+```
+
+This recognizes the supplied screenshot, gets both depth-12 engine results (using the normal cache), and renders the application's controls and arrows directly into `board-and-overlay.png`. It is a composed documentation image, not a desktop screenshot. This avoids Windows capture exclusion removing the overlay. The report records the position and engine moves used; no desktop windows are shown or captured by this command.
 
 ## Project structure
 
@@ -87,6 +101,10 @@ Grid bounds are refined against the actual color transitions at native screen re
 
 Captured tiles and premultiplied sprite templates receive the same light Gaussian smoothing at 40px resolution. This reduces thin-outline differences caused by browser scaling without relaxing the absolute-error or ambiguity gates. Regression fixtures include a Bases board with highlighted squares and a review badge, checked at three sizes.
 
+Before template matching, a board-wide annotation mask finds saturated, connected strokes spanning multiple squares. Per-square background estimates separate strokes from similarly colored board themes; component span and area checks keep ordinary piece artwork and highlighted squares out of the mask. Matching skips the masked pixels, including a small margin for antialiasing, and estimates square backgrounds from unmasked corners. It does not paint over the screenshot or infer hidden artwork from an earlier frame.
+
+Squares with more than 45% of the matching region masked are rejected, alongside the existing absolute-error and ambiguity checks. If a detected annotation leaves the theme match uncertain, the unmasked ONNX classifier cannot override that rejection. Very faint strokes, short marks confined to one square, and heavily overlapping arrows may still require clearing annotations. Regression tests cover the supplied Band Class planning-arrow screenshot at three scales, four annotation colors on a similarly colored board, straight/diagonal/knight arrows, multiple arrows, both orientations, annotation removal, real moves beneath persistent annotations, and heavy-occlusion rejection.
+
 The bundled pack covers 69 distinguishable 2D sets. See [theme coverage and refresh instructions](../assets/themes/README.md) for sources, exclusions, and the full synthetic test suite. Ordinary startup and recognition do not download images or contact Chess.com.
 
 ## Capture, API, and cache
@@ -97,6 +115,8 @@ The cache is stored at `%LOCALAPPDATA%\FishEyes\analysis-cache-v1.json`. Complet
 
 Screens continue updating while the engine is working. Stale results cannot replace the current arrows. FishEyes excludes its own windows from capture, with a brief hide-and-capture fallback when Windows cannot exclude them.
 
+Capture uses a single asynchronous loop: the next scan begins as soon as the previous one finishes, yielding to the UI without a fixed polling interval. Two matching recognized frames are still required before analysis, so piece animations do not immediately generate requests. Rapid Off/On toggles reuse the active loop and discard results from the previous generation. Engine requests remain serialized and deduplicated; error retry backoff is independent of screen scanning.
+
 Both overlay windows reassert their topmost position on foreground-window changes, with a 750ms fallback check. This uses `SetWindowPos` without activation, movement, resizing, or showing hidden windows. The panel stays above its arrow layer, including while analysis is paused. The GUI test verifies recovery above another topmost window and preservation of foreground keyboard focus.
 
 ## Limitations
@@ -105,7 +125,7 @@ Both overlay windows reassert their topmost position on foreground-window change
 - Unfamiliar piece themes, low contrast, animations, or very small boards can prevent recognition. Low-confidence and invalid positions are skipped.
 - Orientation is inferred from piece placement and maintained across nearby positions. Starting directly in an unusual endgame may infer it incorrectly.
 - Castling and en passant rights cannot be established from screenshots and are assumed unavailable. Repetition and the fifty-move rule are not tracked.
-- Capture targets one frame per second; a slow recognition pass delays the next scan.
+- Capture speed depends on board recognition and screen size. Continuous scanning may use more CPU than fixed-interval polling.
 
 ## Dependencies and licensing
 

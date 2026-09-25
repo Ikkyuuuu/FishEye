@@ -12,6 +12,9 @@ namespace FishEyes;
 internal static class SelfTests
 {
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetWindowDisplayAffinity(IntPtr window, out uint affinity);
     [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr window, uint command);
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -131,6 +134,23 @@ internal static class SelfTests
             }
         }
         checks.Add("Bases review screenshot at three scales, thin outlines, highlights and move badge");
+        AnnotationTests.Run(outputDirectory);
+        checks.Add("Planning-arrow screenshot at three scales, colored straight/diagonal/knight arrows, multiple arrows, live moves and heavy occlusion rejection");
+        var depthFake = new FakeEngine();
+        using (var engine = new EngineService(null, depthFake))
+        {
+            foreach (int invalidDepth in new[] { 1, 5, 16 })
+            {
+                bool rejected = false;
+                try { await engine.AnalyzeAsync(position, true, invalidDepth); }
+                catch (ArgumentOutOfRangeException) { rejected = true; }
+                Check(rejected, $"unsupported depth {invalidDepth} rejected locally");
+            }
+            Check(depthFake.Calls == 0, "invalid depths do not call the API");
+            await engine.AnalyzeAsync(position, true, 6);
+            Check(depthFake.Calls == 1, "minimum API depth 6 accepted");
+        }
+        checks.Add("API depth range 6–15, invalid depths rejected before sending");
         var bounds = new Rectangle(-600, 120, 640, 640);
         Check(ArrowOverlay.SquareCenter("e2", bounds, true) == new PointF(-240, 640), "negative monitor coordinates");
         Check(ArrowOverlay.SquareCenter("e7", bounds, false) == new PointF(-320, 640), "flipped arrow coordinates");
@@ -205,13 +225,13 @@ internal static class SelfTests
         return new { passed = true, checks, detections, liveResult, seconds = watch.Elapsed.TotalSeconds };
     }
 
-    public static int RunGui(string samplePath, string output)
+    public static int RunGui(string samplePath, string output, bool windowMode = false)
     {
         using var image = new Bitmap(samplePath);
         using var board = new Form { Text = "FishEyes test board", FormBorderStyle = FormBorderStyle.None, StartPosition = FormStartPosition.Manual, Location = new System.Drawing.Point(180, 240), ClientSize = new System.Drawing.Size(640, 640), TopMost = true, BackgroundImage = image, BackgroundImageLayout = ImageLayout.Stretch };
         var fake = new FakeEngine();
         using var service = new EngineService(null, fake);
-        using var panel = new MainForm(service);
+        using var panel = new MainForm(service, windowMode);
         using var timer = new System.Windows.Forms.Timer { Interval = 300 };
         var watch = Stopwatch.StartNew();
         bool paused = false;
@@ -235,17 +255,29 @@ internal static class SelfTests
             using var other = new Form { Text = "FishEyes stacking test", FormBorderStyle = FormBorderStyle.None,
                 StartPosition = FormStartPosition.Manual, Bounds = panel.Bounds, TopMost = true, ShowInTaskbar = false };
             other.Show(); other.Activate();
+            // Windows may deny foreground activation to a background-launched
+            // test. Verify the actual foreground is preserved in either case.
+            IntPtr foreground = GetForegroundWindow();
+            if (windowMode)
+            {
+                await Task.Delay(1100);
+                Check(!panel.TopMost && (Native.GetWindowLongPtr(panel.Handle, -20).ToInt64() & 8) == 0, "window mode stays out of topmost band");
+                Check(panel.FormBorderStyle == FormBorderStyle.FixedSingle && panel.Region is null, "window has an unclipped native title bar");
+                Check(GetWindowDisplayAffinity(panel.Handle, out uint affinity) && affinity == 0, "window mode permits screenshots");
+                return;
+            }
             if (demote) SetWindowPos(panel.Handle, new IntPtr(-2), 0, 0, 0, 0, 0x13);
             await Task.Delay(1100);
             Check(IsAbove(panel.Handle, other.Handle), "overlay stays above another topmost window");
             Check((Native.GetWindowLongPtr(panel.Handle, -20).ToInt64() & 8) != 0, "native topmost flag restored");
-            Check(GetForegroundWindow() == other.Handle, "keeping overlay visible does not steal focus");
+            Check(GetForegroundWindow() == foreground, "keeping overlay visible does not steal focus");
         }
         board.Show();
         panel.Shown += async (_, _) =>
         {
             try
             {
+                await Task.Yield(); // Let the panel finish its initial Show/activation.
                 await VerifyTopmost(demote: true);
                 // Controls need a live Windows message loop; keep these checks
                 // in the GUI suite so async console tests cannot inherit one.
@@ -285,6 +317,8 @@ internal static class SelfTests
                 decrease.PerformClick(); Check(depthInput.Text == "12", "depth decrement button");
                 depthInput.Focus(); depthInput.Text = "99"; power.Focus();
                 Check(depthInput.Text == "15", "typed depth is clamped to 15");
+                depthInput.Focus(); depthInput.Text = "1"; power.Focus();
+                Check(depthInput.Text == "6" && !decrease.Enabled, "typed depth is clamped to API minimum 6");
                 depthInput.Focus(); depthInput.Text = "12"; power.Focus();
                 using (var preview = new Bitmap(panel.Width, panel.Height))
                 {
@@ -302,6 +336,10 @@ internal static class SelfTests
                     }
                     CaptureToggle(0);
                     power.PerformClick(); Check(panel.IsRunning, "On switch starts capture");
+                    // Toggle while the first scan is in flight: it must be
+                    // discarded and the single capture loop must resume.
+                    panel.SetRunning(false); panel.SetRunning(true);
+                    panel.SetRunning(false); panel.SetRunning(true);
                     await Task.Delay(65);
                     CaptureToggle(1);
                     await Task.Delay(220);
@@ -329,7 +367,9 @@ internal static class SelfTests
                     Check(panel.CurrentFrame?.Recognition.Position.Placement == Start, "live screen recognition");
                     Check(fake.Calls == 2, "live captures do not repeat API calls");
                     Check(panel.ArrowsClickThrough, "native click-through arrows");
-                    Check(panel.ExcludesOwnWindows, "overlay excluded from captured screen");
+                    Check(panel.ExcludesOwnWindows == !windowMode, "capture exclusion follows window mode");
+                    if (windowMode)
+                        Check(!Application.OpenForms.OfType<ArrowOverlay>().Any(a => a.Visible), "window mode keeps arrows inside its preview");
                     Check(detectedBoard.Frame?.Recognition.Position.Placement == Start, "collapsed preview receives live detection");
                     Check(detectedBoard.ArrowCount == 2, "collapsed preview receives both engine arrows");
                     int collapsedHeight = panel.Height;
@@ -364,6 +404,13 @@ internal static class SelfTests
                         panel.DrawToBitmap(preview, new Rectangle(0, 0, panel.Width, panel.Height));
                         preview.Save(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(output))!, "overlay.png"));
                     }
+                    if (windowMode)
+                    {
+                        Check(panel.CurrentFrame!.Bounds.Width > detectedBoard.Width, "scanner keeps the external board as its input");
+                        using var shot = ScreenCapture.Capture(panel.Bounds);
+                        Cv2.ImEncode(".png", shot, out var bytes);
+                        File.WriteAllBytes(Path.Combine(Path.GetDirectoryName(output)!, "window.png"), bytes);
+                    }
                     disclosure.PerformClick();
                     await Task.Delay(55);
                     disclosure.PerformClick();
@@ -384,7 +431,7 @@ internal static class SelfTests
                 {
                     Check(panel.CaptureCount == capturesAtPause, "Off stops captures");
                     Check(panel.ArrowCount == 0 && fake.Calls == 2, "Off clears arrows and stops requests");
-                    File.WriteAllText(output, JsonSerializer.Serialize(new { passed = true, captures = capturesAtPause, requests = fake.Calls, clickThrough = true, captureExclusion = true, bothArrows = true, offStopsCapture = true, depthControls = true, onOffSwitch = true, boardPreview = true, previewAnimation = true, previewReversal = true, cachedPreview = true, previewFrames, previewLastFrameMs, previewLargestFrameGapMs, alwaysOnTop = true, preservesForegroundFocus = true, dpi = panel.DeviceDpi, seconds = watch.Elapsed.TotalSeconds }, new JsonSerializerOptions { WriteIndented = true }));
+                    File.WriteAllText(output, JsonSerializer.Serialize(new { passed = true, windowMode, captures = capturesAtPause, requests = fake.Calls, clickThrough = true, captureExclusion = !windowMode, bothArrows = true, offStopsCapture = true, depthControls = true, onOffSwitch = true, boardPreview = true, previewAnimation = true, previewReversal = true, cachedPreview = true, previewFrames, previewLastFrameMs, previewLargestFrameGapMs, alwaysOnTop = !windowMode, dpi = panel.DeviceDpi, seconds = watch.Elapsed.TotalSeconds }, new JsonSerializerOptions { WriteIndented = true }));
                     exit = 0; timer.Stop(); close.PerformClick();
                 }
             }

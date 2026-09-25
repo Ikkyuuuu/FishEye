@@ -10,6 +10,8 @@ public record CachedAnalysis(Analysis Value, bool FromCache);
 public sealed class EngineService : IDisposable
 {
     public const string Endpoint = "https://stockfish.online/api/s/v2.php";
+    public const int MinimumDepth = 6;
+    public const int MaximumDepth = 15;
     private readonly HttpClient http;
     private readonly string? cachePath;
     private readonly object gate = new();
@@ -37,7 +39,7 @@ public sealed class EngineService : IDisposable
     }
     public async Task<CachedAnalysis> AnalyzeAsync(ChessPosition position, bool white, int depth, CancellationToken cancellation = default)
     {
-        if (depth is < 1 or > 15) throw new ArgumentOutOfRangeException(nameof(depth));
+        if (depth is < MinimumDepth or > MaximumDepth) throw new ArgumentOutOfRangeException(nameof(depth));
         string? invalid = position.InvalidReason(white);
         if (invalid is not null) return new(new(null, "Turn not legal"), true);
         if (!position.HasLegalMove(white)) return new(new(null, "No legal move"), true);

@@ -2,7 +2,7 @@ FishEyes - C# automatic chess overlay
 
 1. Open FishEyes.exe.
 2. Show a complete 2D chessboard on your screen.
-3. Set Search depth (1-15) and switch analysis On.
+3. Set Search depth (6-15) and switch analysis On.
    Use - / +, or type a value and press Enter.
 
 Blue arrow: White's best move, assuming White is to move.

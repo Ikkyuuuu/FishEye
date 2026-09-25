@@ -146,7 +146,7 @@ internal sealed class DepthStepper : UserControl
     {
         BorderStyle = BorderStyle.None, TextAlign = HorizontalAlignment.Center, MaxLength = 2,
         BackColor = OverlayTheme.Surface, ForeColor = OverlayTheme.Text,
-        Font = new Font("Segoe UI", 10, FontStyle.Bold), AccessibleName = "Search depth, 1 to 15", TabIndex = 0
+        Font = new Font("Segoe UI", 10, FontStyle.Bold), AccessibleName = "Search depth, 6 to 15", TabIndex = 0
     };
     private int value = 12;
     public event EventHandler? ValueChanged;
@@ -156,10 +156,10 @@ internal sealed class DepthStepper : UserControl
         get => value;
         set
         {
-            int next = Math.Clamp(value, 1, 15);
+            int next = Math.Clamp(value, EngineService.MinimumDepth, EngineService.MaximumDepth);
             bool changed = this.value != next;
             this.value = next; input.Text = next.ToString();
-            minus.Enabled = next > 1; plus.Enabled = next < 15;
+            minus.Enabled = next > EngineService.MinimumDepth; plus.Enabled = next < EngineService.MaximumDepth;
             if (changed) ValueChanged?.Invoke(this, EventArgs.Empty);
         }
     }

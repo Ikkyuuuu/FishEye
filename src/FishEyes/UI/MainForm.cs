@@ -25,12 +25,13 @@ public sealed class MainForm : Form
     private int previewBaseHeight, previewExtraHeight, previewPanelWidth;
     private Rectangle previewWorkingArea;
     private bool previewExpanded;
-    private readonly System.Windows.Forms.Timer timer = new() { Interval = 1000 };
     private readonly ScreenScanner scanner = new();
     private readonly EngineService engine;
     private readonly ArrowOverlay arrows = new();
-    private readonly AlwaysOnTop alwaysOnTop;
+    private readonly AlwaysOnTop? alwaysOnTop;
+    private readonly bool windowMode;
     private Task<BoardFrame?>? captureTask;
+    private Task? captureLoop;
     private bool captureBusy, closing, captureExcluded;
     private int generation, stableFrames;
     private string? lastPosition, currentKey, analyzingKey;
@@ -38,14 +39,15 @@ public sealed class MainForm : Form
     private Analysis? whiteResult, blackResult;
     public bool IsRunning { get; private set; }
     public int CaptureCount { get; private set; }
-    public int ArrowCount => arrows.ArrowCount;
+    public int ArrowCount => windowMode ? boardPreview.ArrowCount : arrows.ArrowCount;
     public BoardFrame? CurrentFrame => currentFrame;
     public bool ExcludesOwnWindows => captureExcluded && arrows.CaptureExcluded;
     public bool ArrowsClickThrough => (Native.GetWindowLongPtr(arrows.Handle, -20).ToInt64() & 0x20) != 0;
 
-    public MainForm(EngineService? service = null)
+    public MainForm(EngineService? service = null, bool windowMode = false)
     {
-        alwaysOnTop = new AlwaysOnTop(this, arrows);
+        this.windowMode = windowMode;
+        if (!windowMode) alwaysOnTop = new AlwaysOnTop(this, arrows);
         engine = service ?? new EngineService(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "FishEyes", "analysis-cache-v1.json"));
         Text = "FishEyes · live chess";
         Icon = Branding.AppIcon;
@@ -53,8 +55,8 @@ public sealed class MainForm : Form
         // autoscaling with custom-painted geometry can clip the move cards.
         AutoScaleMode = AutoScaleMode.None;
         ClientSize = new Size(300, 300);
-        FormBorderStyle = FormBorderStyle.None;
-        MaximizeBox = false; TopMost = true;
+        FormBorderStyle = windowMode ? FormBorderStyle.FixedSingle : FormBorderStyle.None;
+        MaximizeBox = false; TopMost = !windowMode;
         DoubleBuffered = true;
         Font = new Font("Segoe UI", 9);
         BackColor = OverlayTheme.Background; ForeColor = OverlayTheme.Text;
@@ -69,7 +71,7 @@ public sealed class MainForm : Form
         Controls.AddRange([toggle, depthLabel, depth, status, whiteLabel, blackLabel, detail, close, disclosure, previewClip]);
         LayoutPanel();
         tips.SetToolTip(toggle, "Start or pause automatic analysis");
-        tips.SetToolTip(depth, "Depth 1–15. Higher values search further and may take longer.");
+        tips.SetToolTip(depth, "Depth 6–15. Higher values search further and may take longer.");
         tips.SetToolTip(close, "Close FishEyes (Alt+F4)");
         tips.SetToolTip(whiteLabel, "Blue arrow · assumes White is to move");
         tips.SetToolTip(blackLabel, "Orange arrow · assumes Black is to move");
@@ -79,7 +81,6 @@ public sealed class MainForm : Form
         close.Click += (_, _) => Close();
         toggle.Click += (_, _) => SetRunning(!IsRunning);
         depth.ValueChanged += (_, _) => { ResetView(); if (IsRunning) status.Text = "Checking position…"; };
-        timer.Tick += async (_, _) => await CaptureTickAsync();
         // Create the arrow HWND now so capture exclusion is established before capture.
         _ = arrows.Handle;
     }
@@ -134,7 +135,8 @@ public sealed class MainForm : Form
             int Px(int value) => (int)Math.Round(value * s);
             previewWorkingArea = Screen.FromControl(this).WorkingArea;
             previewBaseHeight = Px(300); previewPanelWidth = Px(300);
-            previewExtraHeight = Math.Min(Px(296), Math.Max(Px(80), previewWorkingArea.Height - Px(316)));
+            int frameHeight = SizeFromClientSize(Size.Empty).Height;
+            previewExtraHeight = Math.Min(Px(296), Math.Max(Px(80), previewWorkingArea.Height - Px(316) - frameHeight));
             previewClip.SetBounds(Px(20), previewBaseHeight, Px(260), previewClip.Height);
             boardPreview.SetBounds(0, 0, Px(260), previewExtraHeight - Px(12));
         }
@@ -142,16 +144,16 @@ public sealed class MainForm : Form
         previewClip.Height = revealed;
         previewClip.Visible = revealed > 0;
         disclosure.Progress = previewProgress;
-        int height = previewBaseHeight + revealed;
-        int top = Visible ? Math.Max(previewWorkingArea.Top, Math.Min(Top, previewWorkingArea.Bottom - height)) : Top;
+        var outerSize = SizeFromClientSize(new Size(previewPanelWidth, previewBaseHeight + revealed));
+        int top = Visible ? Math.Max(previewWorkingArea.Top, Math.Min(Top, previewWorkingArea.Bottom - outerSize.Height)) : Top;
         // One native bounds update per frame instead of resize followed by move.
-        SetBounds(Left, top, previewPanelWidth, height);
+        SetBounds(Left, top, outerSize.Width, outerSize.Height);
         previewClip.ResumeLayout(false); ResumeLayout(false);
     }
     protected override void OnShown(EventArgs e)
     {
         LayoutPanel();
-        alwaysOnTop.Start();
+        alwaysOnTop?.Start();
         base.OnShown(e);
         var area = Screen.FromControl(this).WorkingArea;
         Location = new Point(Math.Clamp(Left, area.Left, Math.Max(area.Left, area.Right - Width)),
@@ -165,6 +167,7 @@ public sealed class MainForm : Form
     protected override void OnResize(EventArgs e)
     {
         base.OnResize(e);
+        if (windowMode) { Invalidate(); return; }
         if (Width <= 0 || Height <= 0) return;
         using var shape = OverlayTheme.Rounded(new RectangleF(0, 0, Width, Height), 16 * DeviceDpi / 96f);
         var old = Region; Region = new Region(shape); old?.Dispose();
@@ -176,12 +179,12 @@ public sealed class MainForm : Form
         float s = DeviceDpi / 96f;
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
-        using var shape = OverlayTheme.Rounded(new RectangleF(.5f, .5f, Width - 1, Height - 1), 16 * s);
+        using var shape = OverlayTheme.Rounded(new RectangleF(.5f, .5f, ClientSize.Width - 1, ClientSize.Height - 1), 16 * s);
         using var border = new Pen(OverlayTheme.Border);
         g.DrawPath(border, shape);
         using var separator = new Pen(OverlayTheme.Border);
-        g.DrawLine(separator, 20 * s, 52 * s, Width - 20 * s, 52 * s);
-        g.DrawLine(separator, 20 * s, 254 * s, Width - 20 * s, 254 * s);
+        g.DrawLine(separator, 20 * s, 52 * s, ClientSize.Width - 20 * s, 52 * s);
+        g.DrawLine(separator, 20 * s, 254 * s, ClientSize.Width - 20 * s, 254 * s);
         g.InterpolationMode = InterpolationMode.HighQualityBicubic;
         g.DrawImage(Branding.Logo, new RectangleF(16 * s, 10 * s, 38 * s, 38 * s));
         using var title = new Font("Segoe UI", 11, FontStyle.Bold);
@@ -204,7 +207,8 @@ public sealed class MainForm : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        captureExcluded = Native.SetWindowDisplayAffinity(Handle, 0x11);
+        // Screenshot mode deliberately remains visible to normal capture tools.
+        captureExcluded = !windowMode && Native.SetWindowDisplayAffinity(Handle, 0x11);
     }
     public void SetRunning(bool running)
     {
@@ -214,8 +218,13 @@ public sealed class MainForm : Form
         toggle.Active = running;
         status.Text = running ? "Finding board…" : "Analysis paused";
         detail.Text = running ? "Keep your chessboard visible" : "Turn on to find your board";
-        if (running) { timer.Start(); _ = CaptureTickAsync(); }
-        else { timer.Stop(); engine.CancelPending(); }
+        if (running)
+        {
+            // A rapid Off/On reuses the existing loop until its current scan
+            // finishes. Starting another would overlap screen recognition.
+            if (captureLoop is null || captureLoop.IsCompleted) captureLoop = CaptureLoopAsync();
+        }
+        else engine.CancelPending();
     }
     private void ResetView(bool clearPreview = true)
     {
@@ -227,22 +236,35 @@ public sealed class MainForm : Form
         whiteLabel.Text = "—"; blackLabel.Text = "—";
         if (clearPreview) boardPreview.UpdateBoard(null, IsRunning);
     }
+    private async Task CaptureLoopAsync()
+    {
+        while (IsRunning && !closing)
+        {
+            await CaptureTickAsync();
+            // Return to the UI message loop without adding a polling delay.
+            // Recognition itself runs off-thread, with one capture at a time.
+            await Task.Yield();
+        }
+    }
     private async Task CaptureTickAsync()
     {
         if (!IsRunning || captureBusy || closing) return;
         captureBusy = true;
         int capturedGeneration = generation;
-        bool hideForCapture = !ExcludesOwnWindows;
+        bool hideForCapture = !windowMode && !ExcludesOwnWindows;
         bool hadArrows = arrows.Visible;
         try
         {
             if (hideForCapture) { Hide(); arrows.Hide(); await Task.Delay(80); Native.DwmFlush(); }
             if (!IsRunning || closing) return;
             var monitors = Screen.AllScreens.Select(s => s.Bounds).ToArray();
-            captureTask = Task.Run(() => scanner.Scan(monitors));
+            // Ignore our preview only inside the recognition image. The real
+            // window stays visible in screenshots and never flashes hidden.
+            Rectangle? ignoredWindow = windowMode && Visible && WindowState != FormWindowState.Minimized ? Bounds : null;
+            captureTask = Task.Run(() => scanner.Scan(monitors, ignoredWindow));
             BoardFrame? frame = await captureTask;
-            CaptureCount++;
             if (closing || !IsRunning || capturedGeneration != generation) return;
+            CaptureCount++;
             boardPreview.UpdateBoard(scanner.LastObservation, IsRunning);
             if (frame is null)
             {
@@ -326,15 +348,15 @@ public sealed class MainForm : Form
     private void ShowCurrentArrows()
     {
         if (currentFrame is not null) boardPreview.SetMoves(currentFrame, whiteResult, blackResult);
-        if (currentFrame is not null && (whiteResult?.Move is not null || blackResult?.Move is not null))
+        if (!windowMode && currentFrame is not null && (whiteResult?.Move is not null || blackResult?.Move is not null))
             arrows.SetMoves(currentFrame, whiteResult, blackResult);
-        alwaysOnTop.Raise();
+        alwaysOnTop?.Raise();
     }
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
         closing = true; IsRunning = false; generation++;
-        alwaysOnTop.Dispose();
-        timer.Stop(); timer.Dispose(); previewAnimation.Stop(); previewAnimation.Dispose(); tips.Dispose(); arrows.Dispose(); engine.Dispose();
+        alwaysOnTop?.Dispose();
+        previewAnimation.Stop(); previewAnimation.Dispose(); tips.Dispose(); arrows.Dispose(); engine.Dispose();
         if (captureTask is { IsCompleted: false } task) _ = task.ContinueWith(_ => scanner.Dispose());
         else scanner.Dispose();
         base.OnFormClosed(e);

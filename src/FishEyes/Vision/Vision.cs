@@ -226,7 +226,9 @@ public sealed class PieceRecognizer : IDisposable
     public Recognition Recognize(Mat screen, Rect box, Recognition? previous = null)
     {
         var theme = themes.Recognize(screen, box);
-        if (ThemeRecognizer.Accepted(theme))
+        // The fallback model does not account for occlusion. Preserve uncertainty
+        // when annotations hide too much evidence instead of accepting its guess.
+        if (ThemeRecognizer.Accepted(theme) || theme.HasAnnotations)
             return Orient(theme.Pieces, theme.Minimum, theme.Mean, previous) with { Theme = theme.Theme };
         var tensor = new DenseTensor<float>(new[] { 64, 3, size, size });
         byte[] pixels = new byte[size * size * 3];

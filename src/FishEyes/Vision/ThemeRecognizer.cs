@@ -11,12 +11,16 @@ public sealed class ThemeRecognizer
     private const int Size = 40;
     private const string Pieces = "PNBRQKpnbrqk";
     private sealed record Theme(string Name, byte[][] Sprites);
-    public sealed record SquareMatch(char Piece, double Error, double Margin, float Quality, int[] Background);
+    public sealed record SquareMatch(char Piece, double Error, double Margin, float Quality, int[] Background)
+    {
+        public double MaskedFraction { get; init; }
+    }
     public sealed record Match(char[] Pieces, float Minimum, float Mean, string Theme, double Error)
     {
         public SquareMatch[] Squares { get; init; } = [];
+        public bool HasAnnotations { get; init; }
     }
-    private sealed record Tile(byte[] Pixels, int[] Background);
+    private sealed record Tile(byte[] Pixels, int[] Background, byte[] Mask, double MaskedFraction);
     private static readonly Lazy<Theme[]> Themes = new(Load);
     private Theme? lastTheme;
     public static IReadOnlyList<string> Names => Themes.Value.Select(t => t.Name).ToArray();
@@ -50,6 +54,7 @@ public sealed class ThemeRecognizer
     public Match Recognize(Mat screen, Rect box)
     {
         var tiles = new Tile[64];
+        var annotations = AnnotationMask.Detect(screen, box, Size);
         using var resized = new Mat();
         for (int s = 0; s < 64; s++)
         {
@@ -61,16 +66,24 @@ public sealed class ThemeRecognizer
             // square sizes. Symmetric filtering preserves the piece silhouette.
             Cv2.GaussianBlur(resized, resized, new OpenCvSharp.Size(5, 5), 1);
             var pixels = new byte[Size * Size * 3]; Marshal.Copy(resized.Data, pixels, 0, pixels.Length);
+            var mask = new byte[Size * Size];
+            int masked = 0;
+            for (int py = 0; py < Size; py++) for (int px = 0; px < Size; px++)
+            {
+                mask[py * Size + px] = annotations[(s / 8 * Size + py) * Size * 8 + s % 8 * Size + px];
+                if (px >= 3 && px < Size - 3 && py >= 3 && py < Size - 3 && mask[py * Size + px] != 0) masked++;
+            }
             var background = new int[3];
             for (int c = 0; c < 3; c++)
             {
                 var corners = new List<int>();
                 foreach (int cy in new[] { 3, 36 }) foreach (int cx in new[] { 3, 36 })
                     for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++)
-                        corners.Add(pixels[((cy + dy) * Size + cx + dx) * 3 + c]);
-                corners.Sort(); background[c] = corners[corners.Count / 2];
+                        if (mask[(cy + dy) * Size + cx + dx] == 0)
+                            corners.Add(pixels[((cy + dy) * Size + cx + dx) * 3 + c]);
+                corners.Sort(); background[c] = corners.Count == 0 ? 0 : corners[corners.Count / 2];
             }
-            tiles[s] = new(pixels, background);
+            tiles[s] = new(pixels, background, mask, masked / (double)((Size - 6) * (Size - 6)));
         }
         if (lastTheme is not null)
         {
@@ -114,12 +127,13 @@ public sealed class ThemeRecognizer
             pieces[s] = index == 0 ? '.' : Pieces[index - 1];
             // A close runner-up or a poor absolute match is rejected, even when
             // the resulting arrangement would happen to be a legal position.
-            quality[s] = error > 14 || margin < .35 || margin / (error + 1) < .08
+            quality[s] = tiles[s].MaskedFraction > .45 || error > 14 || margin < .35 || margin / (error + 1) < .08
                 ? 0 : (float)(1 - error / 255);
             total += error;
-            squares[s] = new(pieces[s], error, margin, quality[s], tiles[s].Background);
+            squares[s] = new(pieces[s], error, margin, quality[s], tiles[s].Background) { MaskedFraction = tiles[s].MaskedFraction };
         }
-        return new(pieces, quality.Min(), quality.Average(), theme.Name, total / 64) { Squares = squares };
+        return new(pieces, quality.Min(), quality.Average(), theme.Name, total / 64)
+        { Squares = squares, HasAnnotations = tiles.Any(t => t.MaskedFraction > 0) };
     }
 
     private static double Error(Tile tile, byte[]? sprite, int dx, int dy, int step)
@@ -129,6 +143,7 @@ public sealed class ThemeRecognizer
         for (int y = 3; y < Size - 3; y += step)
             for (int x = 3; x < Size - 3; x += step)
             {
+                if (tile.Mask[y * Size + x] != 0) continue;
                 int source = ((y - dy) * Size + x - dx) * 4, target = (y * Size + x) * 3;
                 int alpha = sprite is null ? 0 : sprite[source + 3];
                 for (int c = 0; c < 3; c++)
@@ -138,6 +153,6 @@ public sealed class ThemeRecognizer
                 }
                 count += 3;
             }
-        return (double)error / count;
+        return count == 0 ? 255 : (double)error / count;
     }
 }

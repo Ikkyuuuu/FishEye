@@ -47,13 +47,22 @@ public sealed class ScreenScanner : IDisposable
     private readonly Lazy<PieceRecognizer> recognizer = new(() => new PieceRecognizer());
     private BoardFrame? previous;
     public BoardFrame? LastObservation { get; private set; }
-    public BoardFrame? Scan(Rectangle[] monitors)
+    public BoardFrame? Scan(Rectangle[] monitors, Rectangle? ignoredWindow = null)
     {
         BoardFrame? best = null;
         LastObservation = null;
         foreach (var monitor in monitors)
         {
             using var screen = ScreenCapture.Capture(monitor);
+            if (ignoredWindow is { } ignored)
+            {
+                var overlap = Rectangle.Intersect(monitor, ignored);
+                if (overlap.Width > 0 && overlap.Height > 0)
+                {
+                    using var region = new Mat(screen, new OpenCvSharp.Rect(overlap.X - monitor.X, overlap.Y - monitor.Y, overlap.Width, overlap.Height));
+                    region.SetTo(new Scalar(32, 32, 32));
+                }
+            }
             OpenCvSharp.Rect? old = previous is not null && monitor.Contains(previous.Bounds)
                 ? new(previous.Bounds.X - monitor.X, previous.Bounds.Y - monitor.Y, previous.Bounds.Width, previous.Bounds.Height) : null;
             var board = detector.Detect(screen, old);
